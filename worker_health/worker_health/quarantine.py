@@ -141,7 +141,10 @@ class Quarantine:
             quarantined_workers.append(hostname)
         return quarantined_workers
 
-    def get_quarantined_workers_with_details(self, provisioner, worker_type):
+    # TODO: make this run faster by only getting details when needed
+    #   - passing in details=False and only doing first query?
+    # TODO: replace all usages of get_quarantined_workers() with this
+    def get_quarantined_workers_structured(self, provisioner, worker_type, skip_details=False):
         result_dict = {}
 
         # import ipdb
@@ -171,13 +174,16 @@ class Quarantine:
         for item in outcome["workers"]:
             hostname = item["workerId"]
             workerPoolId = f"{provisioner}/{worker_type}"
-            quarantine_info = quarantine_graphql.view_quarantined_worker_details(
-                provisionerId=provisioner,
-                workerType=worker_type,
-                workerGroup=item["workerGroup"],
-                workerId=hostname,
-                workerPoolId=workerPoolId,
-            )
+            if not skip_details:
+                quarantine_info = quarantine_graphql.view_quarantined_worker_details(
+                    provisionerId=provisioner,
+                    workerType=worker_type,
+                    workerGroup=item["workerGroup"],
+                    workerId=hostname,
+                    workerPoolId=workerPoolId,
+                )
+            else:
+                quarantine_info = []
 
             # print(hostname)
             # pprint.pprint(item)
@@ -201,7 +207,7 @@ if __name__ == "__main__":
     q = Quarantine()
     prov = "proj-autophone"
     wt = "gecko-t-bitbar-gw-perf-a55"
-    results = q.get_quarantined_workers_with_details(provisioner=prov, worker_type=wt)
+    results = q.get_quarantined_workers_structured(provisioner=prov, worker_type=wt)
     devices = results["quarantined_workers"]
     print("quarantined workers (%s): %s" % (len(devices), devices))
 

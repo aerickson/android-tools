@@ -13,9 +13,7 @@ def test_python_help():
     # get a list of all python executable files in the current directory
     FILE_ENDING = ".py"
     python_files = [
-        f
-        for f in os.listdir(".")
-        if os.path.isfile(f) and f.endswith(FILE_ENDING) and os.access(f, os.X_OK)
+        f for f in os.listdir(".") if os.path.isfile(f) and f.endswith(FILE_ENDING) and os.access(f, os.X_OK)
     ]
 
     # show header and info about run
@@ -30,7 +28,7 @@ def test_python_help():
 / )( \(  __)(  )  (  _ \   /  \ / )( \(_  _)(  _ \/ )( \(_  _)
 ) __ ( ) _) / (_/\ ) __/  (  O )) \/ (  )(   ) __/) \/ (  )(
 \_)(_/(____)\____/(__)     \__/ \____/ (__) (__)  \____/ (__)
-    """.lstrip()  # noqa: W605
+    """.lstrip(),  # noqa: W605
     )
 
     print(f"directory to inspect: {os.getcwd()}")
@@ -65,6 +63,13 @@ def test_python_help():
         # check if the return code is 0
         if return_code != 0:
             print(f"Error: {file} exited with return code {return_code}.")
+            # show stdout and stderr
+            print("----- STDOUT -----")
+            print(result.stdout)
+            print("----- STDERR -----")
+            print(result.stderr)
+            print("------------------")
+            print(f"FAILED: {cmd}")
             sys.exit(1)
 
     print()

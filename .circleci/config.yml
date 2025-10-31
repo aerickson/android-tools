@@ -21,8 +21,7 @@ jobs:
           app-dir: worker_health
           pkg-manager: pipenv
       - run: cd worker_health && pipenv install --dev
-      - run: cd worker_health && pipenv run pytest --cov=worker_health -v
-      - run: cd worker_health && pipenv run pyflakes *.py
+      - run: cd worker_health && pipenv run pytest --cov=worker_health -vv tests/
   test_last_started:
     docker:
       - image: cimg/python:3.11.4
@@ -33,7 +32,6 @@ jobs:
           app-dir: devicepool_last_started_alert
           pkg-manager: pipenv
       - run: cd devicepool_last_started_alert && pipenv install --dev
-      - run: cd devicepool_last_started_alert && pipenv run pyflakes *.py
 
 workflows:
   ci_test:

@@ -3,8 +3,11 @@
 import argparse
 import re
 import pprint
+import pendulum
 
 from worker_health import quarantine
+from worker_health import tc
+from worker_health.utils import date_in_past, human_delta
 
 
 def natural_sort_key(s, _nsre=re.compile("([0-9]+)")):
@@ -15,7 +18,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("provisioner")
-    parser.add_argument("worker_type")
+    # don't make it required in argparse, require below (so we can list the available worker types)
+    parser.add_argument("worker_type", nargs="?")
 
     sub_parsers = parser.add_subparsers(help="action to take:", dest="action")
 
@@ -24,8 +28,9 @@ if __name__ == "__main__":
     parser_show.add_argument(
         "-v",
         "--verbose",
-        action="store_true",
-        help="enable verbose output",
+        action="count",
+        default=0,
+        help="enable verbose output (can be used multiple times for increased verbosity)",
     )
     # show-all
     parser_show_all = sub_parsers.add_parser(
@@ -62,6 +67,17 @@ if __name__ == "__main__":
     # pprint.pprint(args)
     # sys.exit(1)
 
+    if args.provisioner is not None and ("worker_type" not in args or args.worker_type is None):
+        results = tc.get_worker_types(args.provisioner, 0)
+        # worker_types = [item['workerType'] for item in results['workerTypes']]
+        worker_types_string = ""
+        for item in results["workerTypes"]:
+            worker_types_string += "  " + item["workerType"] + "\n"
+        parser.error(
+            f"you must specify a worker_type.\n\nvalid worker types for provisioner {args.provisioner}:\n{worker_types_string.rstrip()}",
+        )
+        # show worker_types in provisioner
+
     if args.action == "quarantine":
         if args.hosts is None:
             parser.error("you must specify a comma-separated string of hosts")
@@ -91,9 +107,11 @@ if __name__ == "__main__":
         else:
             q.lift_quarantine(args.provisioner, args.worker_type, host_arr)
     elif args.action == "show":
+        # TODO: check that the worker_type is valid
+        # TODO: -v shows reason, -vv shows full json
         q = quarantine.Quarantine()
         # results = q.get_quarantined_workers(provisioner=args.provisioner, worker_type=args.worker_type)
-        results = q.get_quarantined_workers_with_details(
+        results = q.get_quarantined_workers_structured(
             provisioner=args.provisioner,
             worker_type=args.worker_type,
         )
@@ -106,15 +124,36 @@ if __name__ == "__main__":
                 quarantined_workers,
                 key=lambda d: "{0:0>8}".format(d.replace("macmini-r8-", "")),
             )
-            if args.verbose:
+            if args.verbose == 3:
                 print(",".join(formatted_workers))
                 pprint.pprint(quarantine_info)
+            if args.verbose == 1 or args.verbose == 2:
+                for device in quarantine_info:
+                    print(f"{device}:")
+                    for entry in quarantine_info[device]:
+                        reason = entry["quarantineInfo"]
+                        date = entry["updatedAt"]
+                        date_obj = pendulum.parse(date)
+                        date_until = entry["quarantineUntil"]
+                        user = entry["clientId"].split("|")[2]
+                        in_past = date_in_past(date_until)
+                        time_diff = pendulum.now() - date_obj
+                        output_line = ""
+                        if in_past:
+                            # lifting
+                            output_line = f"  L/{user}: {reason},  {human_delta(time_diff.total_seconds())} ago"
+                        else:
+                            # quarantining
+                            output_line = f"  Q/{user}: {reason},  {human_delta(time_diff.total_seconds())} ago"
+                        if args.verbose == 2:
+                            print(output_line)
+                    if args.verbose == 1:
+                        print(output_line)  # only show latest event at -v/1
             else:
                 print(",".join(formatted_workers))
     elif args.action == "show-all":
-        q = quarantine.Quarantine()
-        results = q.get_workers(args.provisioner, args.worker_type)
-        # single-line csv
+        # TODO: check that the worker_type is valid
+        results = tc.get_workers(args.provisioner, args.worker_type)
         output = ""
 
         # sort just based on the numerical element of the workerId

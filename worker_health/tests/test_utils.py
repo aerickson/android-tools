@@ -7,6 +7,16 @@ import requests
 from worker_health import utils
 
 
+def test_date_in_past():
+    from datetime import datetime, timedelta, UTC
+
+    past_date = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    future_date = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    assert utils.date_in_past(past_date) is True
+    assert utils.date_in_past(future_date) is False
+
+
 def test_consecutive_non_ones_from_end():
     test_data = [1, 0, 1, 1, 1, 0]  # should be 1
     test_data_2 = [1, 0, 0, 0]  # should be 3s
