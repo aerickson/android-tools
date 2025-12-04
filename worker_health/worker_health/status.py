@@ -177,4 +177,4 @@ if __name__ == "__main__":
     # TODO: pull out into binary `list_workers`
     # si.list_workers_human()
     # si.list_workers_csv()
-    # si.list_workers_py()
+    si.list_workers_py()

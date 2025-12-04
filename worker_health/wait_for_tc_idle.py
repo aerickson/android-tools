@@ -9,6 +9,7 @@
 #     t-linux64-ms-239,t-linux64-ms-240 -v
 
 import argparse
+import logging
 import time
 from worker_health import status
 
@@ -28,28 +29,42 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
 
+    # Configure logging
+    logging.basicConfig(
+        level=logging.CRITICAL,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logger = logging.getLogger(__name__)
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logger.setLevel(log_level)
+
+    SLEEP_INTERVAL = 10  # seconds
+
     si = status.Status(args.provisioner, args.worker_type)
     hosts_with_non_completed_or_failed_jobs = si.get_hosts_running_jobs(args.hosts)
 
+    logger.info(f"Waiting for hosts to be idle: {args.hosts}...")
     while True:
         # pprint.pprint(hosts_with_non_completed_or_failed_jobs)
-        time.sleep(10)
         if args.single:
             # check if any hosts are idle
             input_set = set(args.hosts)
             result_set = set(hosts_with_non_completed_or_failed_jobs)
             difference = input_set - result_set
             if difference:
-                if args.verbose:
-                    print(f"Hosts no longer busy: {difference}")
+                logger.debug(f"Hosts no longer busy: {difference}")
                 break
             pass
         else:
             # check if all hosts are idle
             if not hosts_with_non_completed_or_failed_jobs:
-                if args.verbose:
-                    print(f"All hosts are idle: {args.hosts}")
+                logger.debug(f"All hosts are idle: {args.hosts}")
                 break
+        logger.debug(
+            f"Hosts with non-completed or failed jobs: {hosts_with_non_completed_or_failed_jobs}. Sleeping {SLEEP_INTERVAL} seconds before rechecking...",
+        )
+        time.sleep(SLEEP_INTERVAL)
 
 
 if __name__ == "__main__":
