@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 set -e
-# set -x
+set -x
 
-PROV="releng-hardware"
-WTYPE="gecko-t-linux-talos-2404"
+PROV="proj-autophone"
+WTYPE="gecko-t-lambda-perf-a55"
 
 ./list_workers.py "$PROV" "$WTYPE"

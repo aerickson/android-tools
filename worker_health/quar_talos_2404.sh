@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -e
-set -x
+# set -x
 
 PROV="releng-hardware"
 WTYPE="gecko-t-linux-talos-2404"
