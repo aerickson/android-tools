@@ -6,4 +6,4 @@ set -e
 PROV="releng-hardware"
 WTYPE="gecko-t-linux-talos-2404"
 
-./list_workers.py "$PROV" "$WTYPE"
+pipenv run ./list_workers.py "$PROV" "$WTYPE"
