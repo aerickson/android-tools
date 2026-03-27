@@ -151,6 +151,7 @@ if __name__ == "__main__":
                         print(output_line)  # only show latest event at -v/1
             else:
                 print(",".join(formatted_workers))
+            print(f"total quarantined: {len(formatted_workers)}")
     elif args.action == "show-all":
         # TODO: check that the worker_type is valid
         results = tc.get_workers(args.provisioner, args.worker_type)
