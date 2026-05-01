@@ -67,9 +67,7 @@ class PendingJobs:
         r = requests.get(an_url, headers=headers)
         return r.json()
 
-    def get_push_pending_jobs(
-        self, project, push_id, platform_filter=None, inspect=True
-    ):
+    def get_push_pending_jobs(self, project, push_id, platform_filter=None, inspect=True):
         # phase 2: get jobs for each push
 
         # TODO: check push health, if complete, we can exit here.
@@ -103,13 +101,13 @@ class PendingJobs:
             if iteration == 0:
                 res = self.get_json(
                     "https://treeherder.mozilla.org/api/project/%s/jobs/?return_type=list&count=2000&push_id=%s&state=pending"
-                    % (project, push_id)
+                    % (project, push_id),
                 )
             else:
                 offset = iteration * 2000
                 res = self.get_json(
                     "https://treeherder.mozilla.org/api/project/%s/jobs/?return_type=list&count=2000&offset=%s&push_id=%s&state=pending"
-                    % (project, offset, push_id)
+                    % (project, offset, push_id),
                 )
             result_count = len(res["results"])
             for item in res["results"]:
@@ -128,20 +126,12 @@ class PendingJobs:
                         # anything still around is due to pulse bugs...
                         #
                         # update oldest_task_timestamp
-                        if (
-                            not oldest_task_timestamp
-                            or item[key_submit_timestamp] < oldest_task_timestamp
-                        ):
+                        if not oldest_task_timestamp or item[key_submit_timestamp] < oldest_task_timestamp:
                             oldest_task_timestamp = item[key_submit_timestamp]
                         # update self.oldest_task_dict
                         if project in self.oldest_task_dict:
-                            if (
-                                item[key_submit_timestamp]
-                                < self.oldest_task_dict[project]
-                            ):
-                                self.oldest_task_dict[project] = item[
-                                    key_submit_timestamp
-                                ]
+                            if item[key_submit_timestamp] < self.oldest_task_dict[project]:
+                                self.oldest_task_dict[project] = item[key_submit_timestamp]
                         else:
                             self.oldest_task_dict[project] = item[key_submit_timestamp]
                         # print the job platform and job type name
@@ -151,10 +141,7 @@ class PendingJobs:
                         if inspect and self.log_level <= 2:
                             # step 1:
                             #   https://treeherder.mozilla.org/api/project/try/jobs/241048999/
-                            s1_url = (
-                                "https://treeherder.mozilla.org/api/project/%s/jobs/%s/"
-                                % (project, item[key_id])
-                            )
+                            s1_url = "https://treeherder.mozilla.org/api/project/%s/jobs/%s/" % (project, item[key_id])
                             s1_res = self.get_json(s1_url)
                             # TODO: figure out why this happens (purged?)
                             if "No job with id" not in s1_res:
@@ -162,10 +149,7 @@ class PendingJobs:
 
                                 # step 2:
                                 #   https://queue.taskcluster.net/v1/task/N96nO0GqT7KohTC9MrVZlQ
-                                s2_url = (
-                                    "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/%s"
-                                    % tc_id
-                                )
+                                s2_url = "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/%s" % tc_id
                                 s2_res = self.get_json(s2_url)
 
                                 output_string = "  %s: %s |" % (
@@ -227,14 +211,15 @@ class PendingJobs:
                 # https://treeherder.mozilla.org/api/project/mozilla-central/push/?full=true&count=10&fromchange=63bd1994e17c43e699c23f11ca01266d48e61d1e
                 # https://treeherder.mozilla.org/api/project/mozilla-central/push/?full=true&count=11&push_timestamp__lte=1552211644
                 if i != 0:
-                    url = (
-                        "https://treeherder.mozilla.org/api/project/%s/push/?full=true&count=%s&tochange=%s"
-                        % (project, page_size + 1, last_seen_commit)
+                    url = "https://treeherder.mozilla.org/api/project/%s/push/?full=true&count=%s&tochange=%s" % (
+                        project,
+                        page_size + 1,
+                        last_seen_commit,
                     )
                 else:
-                    url = (
-                        "https://treeherder.mozilla.org/api/project/%s/push/?full=true&count=%s"
-                        % (project, page_size)
+                    url = "https://treeherder.mozilla.org/api/project/%s/push/?full=true&count=%s" % (
+                        project,
+                        page_size,
                     )
 
                 output = self.get_json(url)
@@ -243,9 +228,7 @@ class PendingJobs:
                 for result in results:
                     jobs_inspected_per_project += 1
                     last_seen_commit = result["revision"]
-                    count, oldest_task_timestamp = self.get_push_pending_jobs(
-                        project, result["id"], filter, inspect
-                    )
+                    count, oldest_task_timestamp = self.get_push_pending_jobs(project, result["id"], filter, inspect)
                     pending_jobs_this_page += count
                     pending_job_total += count
                     push_pbar.update(1)
@@ -257,14 +240,10 @@ class PendingJobs:
                             tqdm.write(self.pp.pformat(result))
                         # diff = diff_epoch_to_now(result["push_timestamp"])
                         diff_task = diff_epoch_to_now(oldest_task_timestamp)
-                        since_string = ", oldest submitted %s ago" % human_time(
-                            seconds=diff_task
-                        )
+                        since_string = ", oldest submitted %s ago" % human_time(seconds=diff_task)
                         self.oldest_job_dict[project] = result["push_timestamp"]
 
-                    push_time = datetime.datetime.fromtimestamp(
-                        result["push_timestamp"]
-                    )
+                    push_time = datetime.datetime.fromtimestamp(result["push_timestamp"])
                     push_time_str = push_time.strftime("%Y/%m/%d-%H.%M")
 
                     # TODO: mention filter here?
@@ -284,9 +263,7 @@ class PendingJobs:
                 results_dict[project] += pending_jobs_this_page
 
                 if self.log_level <= 1:
-                    tqdm.write(
-                        "pending jobs on page %s: %s" % (i + 1, pending_jobs_this_page)
-                    )
+                    tqdm.write("pending jobs on page %s: %s" % (i + 1, pending_jobs_this_page))
                 # don't print this message if we're on the last page already
                 if early_exit and i + 1 != pages and pending_jobs_this_page == 0:
                     early_exit_string = ", exited early"
@@ -306,12 +283,9 @@ class PendingJobs:
                         jobs_inspected_per_project,
                         page_size * pages,
                         early_exit_string,
-                    )
+                    ),
                 )
-                tqdm.write(
-                    "%s: pending %stasks: %s"
-                    % (project, filter_string, results_dict[project])
-                )
+                tqdm.write("%s: pending %stasks: %s" % (project, filter_string, results_dict[project]))
                 # display oldest task
                 if project in self.oldest_task_dict:
                     tqdm.write(
@@ -319,12 +293,8 @@ class PendingJobs:
                         % (
                             project,
                             filter_string,
-                            human_time(
-                                seconds=diff_epoch_to_now(
-                                    self.oldest_task_dict[project]
-                                )
-                            ),
-                        )
+                            human_time(seconds=diff_epoch_to_now(self.oldest_task_dict[project])),
+                        ),
                     )
             push_pbar.close()
         proj_iterator.close()
@@ -379,9 +349,7 @@ if __name__ == "__main__":
         "-p",
         help="a single project to inspect for pending jobs (defaults to use autoland, try, and mozilla-central)",
     )
-    parser.add_argument(
-        "--filter", "-f", help="require pending jobs to match this string"
-    )
+    parser.add_argument("--filter", "-f", help="require pending jobs to match this string")
     parser.add_argument(
         "-c",
         "--caching",
@@ -460,10 +428,7 @@ if __name__ == "__main__":
         if args.project in projects:
             projects = [args.project]
         else:
-            print(
-                "invalid project specified. valid projects are: %s"
-                % (", ".join(projects))
-            )
+            print("invalid project specified. valid projects are: %s" % (", ".join(projects)))
             sys.exit(1)
 
     if args.filter:
@@ -504,7 +469,7 @@ if __name__ == "__main__":
             diff = diff_epoch_to_now(pj.oldest_task_dict[key])
             print(
                 "%s: pending %stasks: %s, oldest pending submitted %s ago"
-                % (key, filter_string, results_dict[key], human_time(seconds=diff))
+                % (key, filter_string, results_dict[key], human_time(seconds=diff)),
             )
         else:
             print("%s: pending %stasks: %s" % (key, filter_string, results_dict[key]))

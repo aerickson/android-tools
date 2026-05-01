@@ -5,9 +5,7 @@ import argparse
 from worker_health import status
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="lists taskcluster workers given a provisioner and worker_type"
-    )
+    parser = argparse.ArgumentParser(description="lists taskcluster workers given a provisioner and worker_type")
     parser.add_argument("provisioner", help="e.g. releng-hardware or gecko-t")
     parser.add_argument("worker_type", help="e.g. gecko-t-osx-1015-r8")
     parser.set_defaults(mode="py")

@@ -12,9 +12,7 @@ class BitbarApiTestdroidEnvvVarsNotSetException(BitbarApiException):
 
 
 class BitbarApi:
-
     def __init__(self):
-
         TESTDROID_URL = os.environ.get("TESTDROID_URL")
         TESTDROID_APIKEY = os.environ.get("TESTDROID_APIKEY")
         if TESTDROID_URL and TESTDROID_APIKEY:

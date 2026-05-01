@@ -21,9 +21,7 @@ with open(os.path.expanduser("~/.tc_quarantine_token")) as json_file:
     data = json.load(json_file)
 creds = {"clientId": data["clientId"], "accessToken": data["accessToken"]}
 
-queue_obj = taskcluster.Queue(
-    {"rootUrl": "https://firefox-ci-tc.services.mozilla.com", "credentials": creds}
-)
+queue_obj = taskcluster.Queue({"rootUrl": "https://firefox-ci-tc.services.mozilla.com", "credentials": creds})
 
 queues_to_check = [
     "terraform-packet/gecko-t-linux",
@@ -53,9 +51,6 @@ for queue in queues_to_check:
     result = queue_obj.pendingTasks(provisioner, workertype)
     # print(queue_obj.pendingTasks(provisioner, workertype))
     # pretty_print(result)
-    print(
-        "%s%s"
-        % ((provisioner + "/" + workertype).ljust(50, " "), result["pendingTasks"])
-    )
+    print("%s%s" % ((provisioner + "/" + workertype).ljust(50, " "), result["pendingTasks"]))
 
 # import ipdb; ipdb.set_trace()

@@ -93,9 +93,7 @@ def test_queue_type_from_string(generate_obj):
 
 
 def test_extract_devices_from_device_groups(generate_obj, dgs):
-    res = generate_obj.extract_devices_from_device_groups(
-        dgs, ["pixel2-perf-2", "pixel2-unit-2", "motog5-perf-2"]
-    )
+    res = generate_obj.extract_devices_from_device_groups(dgs, ["pixel2-perf-2", "pixel2-unit-2", "motog5-perf-2"])
     expected = {
         "motog5": {
             "motog5-14",

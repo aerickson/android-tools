@@ -28,8 +28,7 @@ class TCHelper:
 
     def get_task_status(self, taskid):
         _url, output, exception = utils.get_jsonc2(
-            "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/%s/status"
-            % taskid
+            "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/%s/status" % taskid,
             # "https://queue.taskcluster.net/v1/task/%s/status" % taskid
         )
         return taskid, output, exception
@@ -43,7 +42,7 @@ class TCHelper:
             {
                 "rootUrl": "https://firefox-ci-tc.services.mozilla.com",
                 "credentials": creds,
-            }
+            },
         )
 
         outcome = queue.listWorkers(self.provisioner, worker_type)

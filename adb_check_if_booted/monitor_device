@@ -5,14 +5,14 @@ set -e
 SLEEP_TIME=10
 
 do_check_and_log() {
-    R=`adb_check_if_booted`
-    # D=`date`
-    D=`date +'%Y-%m-%d %T%H %Z'`
+    R=$(adb_check_if_booted)
+    # D=$(date)
+    D=$(date +'%Y-%m-%d %T%H %Z')
     echo "${D}: ${R}"
 }
 
 
-D=`date +'%Y-%m-%d %T%H %Z'`
+D=$(date +'%Y-%m-%d %T%H %Z')
 echo "${D}: starting"
 
 do_check_and_log

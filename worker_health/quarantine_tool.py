@@ -47,6 +47,12 @@ if __name__ == "__main__":
         "--reason",
         help="why the instance is being quarantined",
     )
+    parser_quarantine.add_argument(
+        "-d",
+        "--duration",
+        default="10 years",
+        help="how long to quarantine (e.g. '5 days', '2 weeks', '10 years'). default: 10 years",
+    )
     parser_quarantine.add_argument("hosts", nargs="?")
     # lift
     parser_lift = sub_parsers.add_parser(
@@ -83,15 +89,13 @@ if __name__ == "__main__":
             parser.error("you must specify a comma-separated string of hosts")
         host_arr = args.hosts.split(",")
         q = quarantine.Quarantine()
-        if args.reason:
-            q.quarantine(
-                args.provisioner,
-                args.worker_type,
-                host_arr,
-                reason=args.reason,
-            )
-        else:
-            q.quarantine(args.provisioner, args.worker_type, host_arr)
+        q.quarantine(
+            args.provisioner,
+            args.worker_type,
+            host_arr,
+            duration=args.duration,
+            **({"reason": args.reason} if args.reason else {}),
+        )
     elif args.action == "lift":
         if args.hosts is None:
             parser.error("you must specify a comma-separated string of hosts")

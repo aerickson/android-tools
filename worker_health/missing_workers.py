@@ -8,7 +8,6 @@ from worker_health import health
 
 
 def main():
-
     # TODO: catch ctrl-c and exit nicely
 
     parser = argparse.ArgumentParser()

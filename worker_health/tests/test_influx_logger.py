@@ -10,7 +10,5 @@ def test_bin_influx_logger():
     cmd = ["./influx_logger.py", "-h"]
 
     # excute script
-    pipe = subprocess.run(
-        cmd, cwd=root_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
+    pipe = subprocess.run(cmd, cwd=root_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert pipe.returncode == 0

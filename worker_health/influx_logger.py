@@ -19,17 +19,13 @@ except ImportError:
 
 
 class InfluxLogger:
-    def __init__(
-        self, log_level, time_limit, testing_mode, influx_logging_enabled=False
-    ):
+    def __init__(self, log_level, time_limit, testing_mode, influx_logging_enabled=False):
         self.time_limit = time_limit
         self.logging_enabled = influx_logging_enabled
         self.testing_mode = testing_mode
         self.log_level = log_level
 
-        self.configuration_file = os.path.join(
-            os.path.expanduser("~"), ".bitbar_influx_logger.toml"
-        )
+        self.configuration_file = os.path.join(os.path.expanduser("~"), ".bitbar_influx_logger.toml")
         self.toml = self.read_toml()
         self.pp = pprint.PrettyPrinter(indent=2)
 
@@ -100,19 +96,11 @@ verify_ssl = false
                 204,
                 "line",
             )
-            logger.info(
-                "wrote %s line(s) to influx" % len(wh_instance.influx_log_lines_to_send)
-            )
+            logger.info("wrote %s line(s) to influx" % len(wh_instance.influx_log_lines_to_send))
             if self.log_level:
-                logger.info(
-                    "lines written: \n%s"
-                    % self.pp.pformat(wh_instance.influx_log_lines_to_send)
-                )
+                logger.info("lines written: \n%s" % self.pp.pformat(wh_instance.influx_log_lines_to_send))
         else:
-            logger.info(
-                "test mode: would have written: \n%s"
-                % self.pp.pformat(wh_instance.influx_log_lines_to_send)
-            )
+            logger.info("test mode: would have written: \n%s" % self.pp.pformat(wh_instance.influx_log_lines_to_send))
         # zero out lines to send
         wh_instance.influx_log_lines_to_send = []
 
@@ -132,18 +120,13 @@ verify_ssl = false
         if self.logging_enabled:
             logger.info("influx logging enabled! host is %s" % self.influx_host)
         else:
-            logger.warning(
-                "influx logging _not_ enabled (configuration file is '%s')"
-                % self.configuration_file
-            )
+            logger.warning("influx logging _not_ enabled (configuration file is '%s')" % self.configuration_file)
 
         if self.testing_mode:
             utils.bitbar_systemd_service_present(warn=True)
 
             testing_mode_start_delay = 10
-            logger.warning(
-                "testing mode enabled! logging can still occur if configured."
-            )
+            logger.warning("testing mode enabled! logging can still occur if configured.")
             if testing_mode_start_delay:
                 logger.warning("starting in %s seconds..." % testing_mode_start_delay)
                 time.sleep(testing_mode_start_delay)

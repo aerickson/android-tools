@@ -11,7 +11,7 @@ VERSION = "2.0.0"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description=("runs a command against a set of hosts once " "they are quarantined and not working"),
+        description=("runs a command against a set of hosts once they are quarantined and not working"),
     )
     parser.add_argument(
         "--resume_dir",
@@ -54,7 +54,7 @@ if __name__ == "__main__":
         "--dont-lift_quarantine",
         "-D",
         action="store_true",
-        help=("don't lift the quarantine after successfully running. " "useful for pre-quarantined bad hosts."),
+        help=("don't lift the quarantine after successfully running. useful for pre-quarantined bad hosts."),
     )
     parser.add_argument(
         "--pre_quarantine_additional_host_count",

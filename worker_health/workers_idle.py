@@ -27,9 +27,7 @@ def csv_strs(vstr, sep=","):
             v = str(v0)
             values.append(v)
         except ValueError as err:
-            raise argparse.ArgumentError(
-                "Invalid value %s, values must be a number (%s)" % (vstr, err)
-            )
+            raise argparse.ArgumentError("Invalid value %s, values must be a number (%s)" % (vstr, err))
     return values
 
 

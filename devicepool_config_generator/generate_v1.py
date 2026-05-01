@@ -82,7 +82,9 @@ class DevicePoolConfigGenerator:
     @staticmethod
     def split_list(a_list, slice_start=0, slice_end=0.5):
         newList = a_list[
-            int(len(a_list) * slice_start) : int(len(a_list) * slice_end)  # noqa: E203
+            int(len(a_list) * slice_start) : int(
+                len(a_list) * slice_end,
+            )  # noqa: E203
         ]
         return newList
 
@@ -100,10 +102,7 @@ class DevicePoolConfigGenerator:
     def generate(self):
         # TODO: take path to this file as arg, don't imply it's in .
         if not os.path.exists(self.get_path(self.original_config_file_name)):
-            raise DPCGException(
-                "Can't find %s in %s!"
-                % (self.original_config_file_name, self.config_dir)
-            )
+            raise DPCGException("Can't find %s in %s!" % (self.original_config_file_name, self.config_dir))
 
         # #    "https://queue.taskcluster.net/v1/pending/proj-autophone/gecko-t-ap-unit-p2",
         # #    "https://queue.taskcluster.net/v1/pending/proj-autophone/gecko-t-ap-perf-p2",
@@ -270,14 +269,10 @@ if __name__ == "__main__":
         action="store_true",
         help="run in daemon mode (continuously)",
     )
-    parser.add_argument(
-        "-c", "--config-dir", help="path to the directory with config.yml"
-    )
+    parser.add_argument("-c", "--config-dir", help="path to the directory with config.yml")
     args = parser.parse_args()
 
-    dpcg = DevicePoolConfigGenerator(
-        config_dir=args.config_dir, daemon_mode=args.daemon
-    )
+    dpcg = DevicePoolConfigGenerator(config_dir=args.config_dir, daemon_mode=args.daemon)
     try:
         dpcg.main()
     except DPCGException as e:

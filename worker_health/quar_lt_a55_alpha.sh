@@ -6,4 +6,5 @@ set -x
 PROV="proj-autophone"
 WTYPE="gecko-t-lambda-alpha-a55"
 
-pipenv run ./quarantine_tool.py "$PROV" "$WTYPE" "$@"
+VENV=$(pipenv --venv)
+"$VENV"/bin/python ./quarantine_tool.py "$PROV" "$WTYPE" "$@"

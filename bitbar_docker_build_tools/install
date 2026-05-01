@@ -7,8 +7,8 @@ if [ -z "$1" ]; then
 else
   pwd=$(pwd)
   set -x
-  cd $1
-  ln -sf ${pwd}/*.sh .
-  ln -sf ${pwd}/*.conf .
+  cd "$1"
+  ln -sf "${pwd}"/*.sh .
+  ln -sf "${pwd}"/*.conf .
   set +x
 fi

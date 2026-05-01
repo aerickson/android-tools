@@ -6,4 +6,5 @@ set -e
 PROV="releng-hardware"
 WTYPE="gecko-t-linux-talos-1804"
 
-pipenv run ./quarantine_tool.py "$PROV" "$WTYPE" "$@"
+VENV=$(pipenv --venv)
+"$VENV"/bin/python ./quarantine_tool.py "$PROV" "$WTYPE" "$@"

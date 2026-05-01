@@ -11,9 +11,9 @@ j = journal.Reader()
 j.this_boot()
 j.this_machine()
 
-j.add_match(_SYSTEMD_UNIT=u"bitbar.service")
+j.add_match(_SYSTEMD_UNIT="bitbar.service")
 
-yesterday = time.time() - 24 * 60 ** 2
+yesterday = time.time() - 24 * 60**2
 five_minutes_ago = time.time() - 5 * 60
 j.seek_realtime(five_minutes_ago)
 
