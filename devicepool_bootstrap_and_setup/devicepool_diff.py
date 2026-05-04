@@ -27,6 +27,8 @@ def checksum_file(host, path):
         text=True,
     )
     if result.returncode != 0:
+        if "No such file or directory" in result.stderr:
+            return "MISSING"
         return f"ERROR: {result.stderr.strip()}"
     return result.stdout.strip()
 
@@ -34,6 +36,7 @@ def checksum_file(host, path):
 def main():
     parser = argparse.ArgumentParser(description="Checksum config files on the devicepool fleet for comparison.")
     parser.add_argument(
+        "-e",
         "--env-only",
         action="store_true",
         help="only check env files (bitbar.env, bitbar-v3.env, lambdatest.env)",
