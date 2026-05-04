@@ -11,6 +11,8 @@ BOLD_CYAN = "\033[1;36m"
 DIM = "\033[2m"
 DIM_RED = "\033[2;31m"
 DIM_GREEN = "\033[2;32m"
+RED = "\033[31m"
+GREEN = "\033[32m"
 RESET = "\033[0m"
 
 
@@ -73,7 +75,7 @@ def fetch_remote(host, path):
 
 def show_diff(local_path, local_lines, host, remote_content):
     if remote_content is None:
-        print(f"  {host}: MISSING (cannot diff)")
+        print(f"  {host}: {color('MISSING (cannot diff)', RED)}")
         return
     remote_lines = remote_content.splitlines(keepends=True)
     diff = list(
@@ -85,9 +87,9 @@ def show_diff(local_path, local_lines, host, remote_content):
         ),
     )
     if not diff:
-        print(f"  {host}: identical to local")
+        print(f"  {host}: {color('identical to local', GREEN)}")
     else:
-        print(f"  {host}: differs from local")
+        print(f"  {host}: {color('differs from local', RED)}")
         for line in diff:
             print(f"    {color_diff_line(line)}", end="")
         print()
@@ -151,8 +153,13 @@ def main():
             for host in HOSTS:
                 remote_hash, output = checksum_remote(host, path)
                 if local_hash and remote_hash:
-                    match = "matches local" if remote_hash == local_hash else "DIFFERS from local"
+                    if remote_hash == local_hash:
+                        match = color("matches local", GREEN)
+                    else:
+                        match = color("DIFFERS from local", RED)
                     print(f"  {host}: {output} [{match}]")
+                elif output == "MISSING":
+                    print(f"  {host}: {color('MISSING', RED)}")
                 else:
                     print(f"  {host}: {output}")
         print()
