@@ -129,28 +129,49 @@ class Status:
         # return hosts not idle
         return hosts_with_non_completed_or_failed_jobs
 
-    def list_workers_human(self):
+    def _filter_workers(self, workers, omit_quarantined=False):
+        if not omit_quarantined:
+            return workers
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+
+        def is_quarantined(w):
+            until = w.get("quarantineUntil")
+            if not until:
+                return False
+            try:
+                return datetime.fromisoformat(until.replace("Z", "+00:00")) > now
+            except Exception:
+                return False
+
+        return [w for w in workers if not is_quarantined(w)]
+
+    def list_workers_human(self, omit_quarantined=False):
         results = self.tc_wm.listWorkers(self.provisioner, self.worker_type)
+        workers = self._filter_workers(results["workers"], omit_quarantined)
         return_str = ""
         # TODO: fix natsorting, copy how _py does it?
-        for result in natsorted(results["workers"]):
+        for result in natsorted(workers):
             return_str += f"{result['workerPoolId']} {result['workerGroup']} {result['workerId']}\n"
         print(return_str)
         return return_str
 
-    def list_workers_csv(self):
+    def list_workers_csv(self, omit_quarantined=False):
         results = self.tc_wm.listWorkers(self.provisioner, self.worker_type)
+        workers = self._filter_workers(results["workers"], omit_quarantined)
         return_str = ""
         # TODO: fix natsorting, copy how _py does it?
-        for result in natsorted(results["workers"]):
+        for result in natsorted(workers):
             return_str += f"{result['workerId']},"
         # trim trailing comma
         print(return_str[:-1])
 
-    def list_workers_py(self):
+    def list_workers_py(self, omit_quarantined=False):
         results = self.tc_wm.listWorkers(self.provisioner, self.worker_type)
+        workers = self._filter_workers(results["workers"], omit_quarantined)
         return_arr = []
-        for result in results["workers"]:
+        for result in workers:
             return_arr.append(result["workerId"])
         pprint.pprint(natsorted(return_arr))
 

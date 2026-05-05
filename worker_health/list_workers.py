@@ -27,15 +27,22 @@ if __name__ == "__main__":
         const="csv",
         dest="mode",
     )
+    parser.add_argument(
+        "--omit-quarantined",
+        "-o",
+        help="exclude quarantined workers from output",
+        action="store_true",
+        default=False,
+    )
     # parse it
     args = parser.parse_args()
 
     si = status.Status(args.provisioner, args.worker_type)
     if args.mode == "human":
-        si.list_workers_human()
+        si.list_workers_human(omit_quarantined=args.omit_quarantined)
     elif args.mode == "csv":
-        si.list_workers_csv()
+        si.list_workers_csv(omit_quarantined=args.omit_quarantined)
     elif args.mode == "py":
-        si.list_workers_py()
+        si.list_workers_py(omit_quarantined=args.omit_quarantined)
     else:
         raise Exception("shouldn't be here")

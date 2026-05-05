@@ -6,4 +6,4 @@ set -x
 PROV="proj-autophone"
 WTYPE="gecko-t-lambda-perf-a55"
 
-./list_workers.py "$PROV" "$WTYPE"
+./list_workers.py "$PROV" "$WTYPE" "$@"
