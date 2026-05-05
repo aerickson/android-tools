@@ -142,13 +142,24 @@ if __name__ == "__main__":
                         user = entry["clientId"].split("|")[2]
                         in_past = date_in_past(date_until)
                         time_diff = pendulum.now() - date_obj
+                        until_obj = pendulum.parse(date_until)
+                        until_diff = abs((pendulum.now() - until_obj).total_seconds())
+                        expiry_str = (
+                            f"expired {human_delta(until_diff)} ago"
+                            if in_past
+                            else f"expires in {human_delta(until_diff)}"
+                        )
                         output_line = ""
                         if in_past:
                             # lifting
-                            output_line = f"  L/{user}: {reason},  {human_delta(time_diff.total_seconds())} ago"
+                            output_line = (
+                                f"  L/{user}: {reason},  set {human_delta(time_diff.total_seconds())} ago, {expiry_str}"
+                            )
                         else:
                             # quarantining
-                            output_line = f"  Q/{user}: {reason},  {human_delta(time_diff.total_seconds())} ago"
+                            output_line = (
+                                f"  Q/{user}: {reason},  set {human_delta(time_diff.total_seconds())} ago, {expiry_str}"
+                            )
                         if args.verbose == 2:
                             print(output_line)
                     if args.verbose == 1:

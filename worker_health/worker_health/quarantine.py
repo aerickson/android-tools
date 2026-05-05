@@ -132,13 +132,10 @@ class Quarantine:
             i += 1
             # tasks += len(outcome.get('tasks', []))
 
-        quarantined_workers = []
+        quarantined_workers = {}
         for item in outcome["workers"]:
             hostname = item["workerId"]
-            # print(hostname)
-
-            # pprint.pprint(item)
-            quarantined_workers.append(hostname)
+            quarantined_workers[hostname] = item.get("quarantineUntil")
         return quarantined_workers
 
     # TODO: make this run faster by only getting details when needed
@@ -199,7 +196,7 @@ class Quarantine:
     def print_quarantined_workers(self, provisioner, worker_type):
         output = self.get_quarantined_workers(provisioner, worker_type)
         count = len(output)
-        print("quarantined workers (%s): %s" % (count, output))
+        print("quarantined workers (%s): %s" % (count, list(output.keys())))
 
 
 if __name__ == "__main__":

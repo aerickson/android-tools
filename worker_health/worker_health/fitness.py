@@ -313,7 +313,7 @@ class Fitness:
 
         print("actual pool size: %s" % e_count)
 
-        print("quarantined workers (%s): %s" % (len(quarantined_workers), quarantined_workers))
+        print("quarantined workers (%s): %s" % (len(quarantined_workers), list(quarantined_workers.keys())))
         print(
             "missing workers (%s/%s): %s"
             % (
@@ -643,8 +643,17 @@ class Fitness:
 
         # quarantine
         if device in self.quarantine_data[queue]:
-            # if "alerts" not in results_obj:
-            #     results_obj["alerts"] = []
-            results_obj.setdefault("alerts", []).append("Quarantined.")
+            quarantine_until = self.quarantine_data[queue][device]
+            if quarantine_until:
+                until_dt = pendulum.parse(quarantine_until)
+                diff_seconds = abs((pendulum.now(tz="UTC") - until_dt).total_seconds())
+                duration_str = utils.human_delta(diff_seconds)
+                if until_dt > pendulum.now(tz="UTC"):
+                    alert_msg = f"Quarantined (expires in {duration_str})."
+                else:
+                    alert_msg = f"Quarantined (expired {duration_str} ago)."
+            else:
+                alert_msg = "Quarantined."
+            results_obj.setdefault("alerts", []).append(alert_msg)
 
         return device, results_obj, None
