@@ -117,11 +117,18 @@ def parse_args():
         help="Taskcluster queue id (e.g. proj-autophone/gecko-t-bitbar-gw-test-2)",
     )
     parser.add_argument("--count", "-c", type=int, default=1, help="Number of tasks to create (default: 1)")
-    parser.add_argument(
+    cmd_group = parser.add_mutually_exclusive_group()
+    cmd_group.add_argument(
         "--bash-command",
         "-b",
-        default=DEFAULT_BASH_COMMAND,
+        default=None,
         help=f"Command to run in the task (default: {DEFAULT_BASH_COMMAND})",
+    )
+    cmd_group.add_argument(
+        "--script-file",
+        "-s",
+        metavar="FILE",
+        help="Shell script file to use as the task command (mutually exclusive with --bash-command)",
     )
     parser.add_argument(
         "--command-timeout",
@@ -369,10 +376,16 @@ def main():
         format="%(asctime)s.%(msecs)03d - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    if args.script_file:
+        with open(args.script_file) as f:
+            bash_command = f.read().strip()
+    else:
+        bash_command = args.bash_command or DEFAULT_BASH_COMMAND
+
     tcclient = TCClient(
         args.queue,
         dry_run=args.dry_run,
-        bash_command=args.bash_command,
+        bash_command=bash_command,
         command_timeout_seconds=args.command_timeout,
         requests_timeout=args.requests_timeout,
     )

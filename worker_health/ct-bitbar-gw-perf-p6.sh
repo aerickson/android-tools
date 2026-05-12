@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 set -e
-# set -x
+set -x
 
-PROV_AND_WORKER_TYPE="releng-hardware/gecko-t-linux-talos-2404"
+PROV_AND_WORKER_TYPE="proj-autophone/gecko-t-bitbar-gw-perf-p6"
 
 # check that count argument is provided
 if [ -z "$1" ]; then

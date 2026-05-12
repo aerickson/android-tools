@@ -14,4 +14,4 @@ fi
 COUNT="$1"
 shift
 
-pipenv run ./create_tc_task.py -q "$PROV_AND_WORKER_TYPE" -c "$COUNT" "$@"
+pipenv run -- python ./create_tc_task.py -q "$PROV_AND_WORKER_TYPE" -c "$COUNT" "$@"
