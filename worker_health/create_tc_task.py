@@ -369,6 +369,28 @@ def main_one_off_mode(tcclient, args):
             bar()
 
 
+def _build_command_from_script(script_path):
+    with open(script_path) as f:
+        content = f.read().strip()
+
+    # Detect interpreter from shebang or file extension
+    first_line = content.splitlines()[0] if content else ""
+    if first_line.startswith("#!"):
+        shebang = first_line[2:].strip()
+        # e.g. "/usr/bin/env python3" -> "python3", "/bin/bash" -> "bash"
+        interpreter = shebang.split()[-1] if shebang else "bash"
+    elif script_path.endswith(".py"):
+        interpreter = "python3"
+    else:
+        interpreter = "bash"
+
+    if "bash" in interpreter or "sh" in interpreter:
+        return content
+
+    # For non-bash interpreters, wrap in a heredoc so bash feeds the script correctly
+    return f"{interpreter} << 'SCRIPT_EOF'\n{content}\nSCRIPT_EOF"
+
+
 def main():
     args = parse_args()
     logging.basicConfig(
@@ -377,8 +399,7 @@ def main():
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     if args.script_file:
-        with open(args.script_file) as f:
-            bash_command = f.read().strip()
+        bash_command = _build_command_from_script(args.script_file)
     else:
         bash_command = args.bash_command or DEFAULT_BASH_COMMAND
 
