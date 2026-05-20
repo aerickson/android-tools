@@ -71,4 +71,4 @@ fabric.properties
 # aje
 **/*.pyc
 .vscode
-worker_health/pool_classifier_web/pgdata/
+worker_health/worker_health/pool_classifier_web/pgdata/
