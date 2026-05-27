@@ -51,6 +51,7 @@ class TCClient:
         bash_command=DEFAULT_BASH_COMMAND,
         command_timeout_seconds=90,
         requests_timeout=60,
+        env=None,
     ):
         self.root_url = "https://firefox-ci-tc.services.mozilla.com"
         try:
@@ -66,6 +67,7 @@ class TCClient:
         self.dry_run = dry_run
         self.bash_command = bash_command
         self.command_timeout_seconds = command_timeout_seconds
+        self.env = env or {}
         self.queue_object = taskcluster.Queue(
             {"rootUrl": self.root_url, "credentials": creds, "timeout": requests_timeout},
         )
@@ -94,6 +96,7 @@ class TCClient:
                         "path": "out",
                     },
                 ],
+                **({"env": self.env} if self.env else {}),
             },
             "metadata": {
                 "name": "test-task",
@@ -169,6 +172,14 @@ def parse_args():
         type=int,
         default=60,
         help="Requests timeout in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--env",
+        "-e",
+        action="append",
+        default=[],
+        metavar="KEY=VAL",
+        help="Set a payload env var (repeatable). Example: --env FLEETBENCH_ARGS='adb --serial X --json'",
     )
     parser.add_argument(
         "--continuous-mode-check-interval",
@@ -410,12 +421,20 @@ def main():
     else:
         bash_command = args.bash_command or DEFAULT_BASH_COMMAND
 
+    env = {}
+    for pair in args.env:
+        if "=" not in pair:
+            sys.exit(f"--env expects KEY=VAL, got: {pair!r}")
+        k, v = pair.split("=", 1)
+        env[k] = v
+
     tcclient = TCClient(
         args.queue,
         dry_run=args.dry_run,
         bash_command=bash_command,
         command_timeout_seconds=args.command_timeout,
         requests_timeout=args.requests_timeout,
+        env=env,
     )
     if args.dry_run:
         logging.info("Dry Run mode is enabled. No tasks will be created.")
