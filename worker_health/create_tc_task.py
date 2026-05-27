@@ -85,8 +85,15 @@ class TCClient:
             "created": current_time,
             "deadline": three_hours_from_now,
             "payload": {
-                "command": [["/bin/bash", "-c", self.bash_command]],
+                "command": [["/bin/bash", "-c", f"mkdir -p out; {self.bash_command}"]],
                 "maxRunTime": self.command_timeout_seconds,
+                "artifacts": [
+                    {
+                        "type": "directory",
+                        "name": "public/out",
+                        "path": "out",
+                    },
+                ],
             },
             "metadata": {
                 "name": "test-task",
