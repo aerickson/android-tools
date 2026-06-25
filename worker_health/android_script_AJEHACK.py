@@ -12,10 +12,23 @@ import subprocess
 import sys
 from glob import glob
 
-from mozdevice import ADBDevice, ADBError, ADBHost, ADBTimeoutError
-
 MAX_NETWORK_ATTEMPTS = 3
 ADB_COMMAND_TIMEOUT = 10
+ADBDevice = ADBError = ADBHost = ADBTimeoutError = None
+
+
+def load_mozdevice():
+    global ADBDevice, ADBError, ADBHost, ADBTimeoutError
+
+    from mozdevice import ADBDevice as _ADBDevice
+    from mozdevice import ADBError as _ADBError
+    from mozdevice import ADBHost as _ADBHost
+    from mozdevice import ADBTimeoutError as _ADBTimeoutError
+
+    ADBDevice = _ADBDevice
+    ADBError = _ADBError
+    ADBHost = _ADBHost
+    ADBTimeoutError = _ADBTimeoutError
 
 
 def fatal(message, exception=None, retry=True):
@@ -126,6 +139,7 @@ def main():
         "wrapped with required setup and teardown.",
     )
     _args, extra_args = parser.parse_known_args()
+    load_mozdevice()
     logging.basicConfig(format="%(asctime)-15s %(levelname)s %(message)s", level=logging.INFO, stream=sys.stdout)
 
     print("""
