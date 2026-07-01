@@ -2,6 +2,17 @@
 
 Tools to ensure Taskcluster workers are not idle and performing well (success rate).
 
+## Pool Classifier moved
+
+Pool Classifier now lives in its own repository:
+
+```text
+git@github.com:mozilla-platform-ops/pool-classifier.git
+```
+
+Use that repository for Pool Classifier development, deployment, issues, and
+operator documentation. Do not deploy Pool Classifier from this repository.
+
 ## TODO
 
 - move code into https://github.com/mozilla-platform-ops/relops-infra
