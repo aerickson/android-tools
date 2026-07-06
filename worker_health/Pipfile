@@ -31,8 +31,3 @@ pendulum = "*"
 sentry-sdk = "*"
 rstr = "*"
 rich = "*"
-psycopg = {extras = ["binary"], version = "*"}
-psycopg-pool = "*"
-flask = "*"
-gunicorn = "*"
-google-auth = "*"
