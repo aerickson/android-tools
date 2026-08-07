@@ -40,10 +40,16 @@ import taskcluster
 import math
 from rich.table import Table
 
-DEFAULT_BASH_COMMAND = "for ((i=1;i<=60;i++)); do echo $i; sleep 1; done"
+DEFAULT_COMMAND_TIMEOUT = 70
+DEFAULT_COMMAND_TIMEOUT_BUFFER = 10
 DEFAULT_DOCKER_IMAGE = "ubuntu:24.04"
 BITBAR_DASHBOARD_URL = "https://mozilla-v3.bitbar.com//#testing/device-session"
 BITBAR_SCRIPTVARS_PATH = "/builds/taskcluster/scriptvars.json"
+
+
+def default_bash_command(command_timeout_seconds):
+    duration = max(1, command_timeout_seconds - DEFAULT_COMMAND_TIMEOUT_BUFFER)
+    return f'for ((i=1;i<={duration};i++)); do echo "$i"; sleep 1; done'
 
 
 def prepend_bitbar_dashboard_link(queue, bash_command):
@@ -89,8 +95,8 @@ class TCClient:
         self,
         queue,
         dry_run=False,
-        bash_command=DEFAULT_BASH_COMMAND,
-        command_timeout_seconds=90,
+        bash_command=None,
+        command_timeout_seconds=DEFAULT_COMMAND_TIMEOUT,
         requests_timeout=60,
         env=None,
         payload_format="generic-worker",
@@ -108,8 +114,11 @@ class TCClient:
             raise RuntimeError(f"Missing key in ~/.tc_token: {e}")
         self.queue = queue
         self.dry_run = dry_run
-        self.bash_command = prepend_bitbar_dashboard_link(queue, bash_command)
         self.command_timeout_seconds = command_timeout_seconds
+        self.bash_command = prepend_bitbar_dashboard_link(
+            queue,
+            bash_command or default_bash_command(command_timeout_seconds),
+        )
         self.env = env or {}
         self.payload_format = payload_format
         self.docker_image = docker_image
@@ -172,7 +181,10 @@ def parse_args():
         "--bash-command",
         "-b",
         default=None,
-        help=f"Command to run in the task (default: {DEFAULT_BASH_COMMAND})",
+        help=(
+            "Command to run in the task "
+            f"(default: print once per second for --command-timeout minus {DEFAULT_COMMAND_TIMEOUT_BUFFER}s)"
+        ),
     )
     cmd_group.add_argument(
         "--script-file",
@@ -184,8 +196,8 @@ def parse_args():
         "--command-timeout",
         "-t",
         type=int,
-        default=90,
-        help="Command timeout in seconds (default: 90)",
+        default=DEFAULT_COMMAND_TIMEOUT,
+        help=f"Command timeout in seconds (default: {DEFAULT_COMMAND_TIMEOUT})",
     )
     parser.add_argument(
         "--payload-format",
@@ -472,7 +484,7 @@ def main():
     if args.script_file:
         bash_command = _build_command_from_script(args.script_file)
     else:
-        bash_command = args.bash_command or DEFAULT_BASH_COMMAND
+        bash_command = args.bash_command or default_bash_command(args.command_timeout)
 
     env = {}
     for pair in args.env:

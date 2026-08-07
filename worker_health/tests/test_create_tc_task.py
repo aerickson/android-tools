@@ -1,4 +1,8 @@
-from create_tc_task import build_payload
+from create_tc_task import build_payload, default_bash_command
+
+
+def test_default_bash_command_uses_timeout_minus_buffer():
+    assert default_bash_command(70) == 'for ((i=1;i<=60;i++)); do echo "$i"; sleep 1; done'
 
 
 def test_build_docker_worker_payload():
