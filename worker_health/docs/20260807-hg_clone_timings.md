@@ -2,9 +2,74 @@
 
 Research log started 2026-08-07.
 
+## Motivation
+
+Bitbar hosts have been unable to clone `mozilla-unified` before the task
+timeout since their move from the San Jose, California datacenter to a new,
+nominally faster datacenter in Florida. This research compares clone behavior
+across Bitbar, existing Taskcluster workers, and a controlled GCP baseline to
+identify whether network location, storage, CPU, memory, or clone configuration
+is responsible.
+
+The CDN whitelist includes these Bitbar source ranges:
+
+```text
+# Old DC
+205.234.8.112/28
+
+# New DC
+128.136.193.129/26
+```
+
+The authoritative Terraform definition is the `bitbar_ips` output in
+[`modules/waf_ip_allowlists/outputs.tf`](https://github.com/mozilla/webservices-infra/blob/main/modules/waf_ip_allowlists/outputs.tf).
+The Mercurial Fastly module consumes it through `sigsci_site_list.bitbar_ip_list`
+in [`hg/tf/modules/fastly/main.tf`](https://github.com/mozilla/webservices-infra/blob/main/hg/tf/modules/fastly/main.tf).
+Both locations are shown in [webservices-infra PR #10726](https://github.com/mozilla/webservices-infra/pull/10726),
+`fix(hg): add IP blocks for LambdaTest and new Bitbar DC (Bug 1922180)`.
+
+### Current Fastly rate-limit IP bypasses
+
+As read from the current `main` branch, the Mercurial Fastly
+`rate_limit_unprivileged` rule bypasses its 50-requests-per-minute limit for
+four IP lists, totaling 229 IPv4 CIDRs or addresses:
+
+| List | Entries | Contents |
+| --- | ---: | --- |
+| GCP | 225 | Google Cloud IPv4 ranges for `us-central1`, `us-west1`, `northamerica-northeast1`, and `us-east1`; maintained from Google Cloud's published `cloud.json` data. |
+| Bitbar | 2 | `205.234.8.112/28`, `128.136.193.129/26` |
+| LambdaTest | 1 | `209.58.137.41/32` |
+| Mozilla MDC1 | 1 | `63.245.208.0/23` |
+
+The rule also excludes known user agents and `/bundles/*` requests. These are
+rate-limit bypasses in this Fastly rule, not proof that every CDN or WAF policy
+allows the same traffic. The GCP baseline VM's public IP, `34.138.201.81`, is
+within the included `34.138.0.0/15` range.
+
 ## Question
 
 What factors account for differences in `hg clone` duration across workers?
+
+## GCP baseline setup
+
+The Ubuntu 24.04 `e2.micro` baseline was created in
+`taskcluster-imaging/us-east1-b` with this command:
+
+```bash
+gcloud compute instances create hg-clone-benchmark-20260807-1715 \
+  --project taskcluster-imaging \
+  --zone us-east1-b \
+  --machine-type e2-micro \
+  --image-family ubuntu-2404-lts-amd64 \
+  --image-project ubuntu-os-cloud \
+  --boot-disk-size 50GB \
+  --boot-disk-type pd-balanced \
+  --labels=purpose=hg-clone-benchmark,owner=aerickson
+```
+
+The 50-GB disk provides room for the clone, working copy, and benchmark
+artifacts. The instance name is intentionally timestamped and should be
+deleted when this baseline run is no longer needed.
 
 ## Measurements
 
@@ -50,6 +115,33 @@ branch default`.
 
 The progress counters use different clone phases and totals, so they are not a
 direct speed comparison. Both runs are incomplete.
+
+## Expected duration
+
+For a successful full clone and working-copy update, the expected end-to-end
+duration depends strongly on sustained network throughput, CPU, memory, and
+storage performance.
+
+| Worker profile | Reasonable end-to-end range |
+| --- | ---: |
+| 1 vCPU / 1 GB VM with modest network | 25–60+ minutes; may run out of memory |
+| Typical CI worker with 4+ cores and SSD storage | 8–20 minutes |
+| Fast network, NVMe storage, and ample CPU/RAM | 4–10 minutes |
+
+The 6.55 GB bundle alone has a theoretical transfer floor of about nine
+minutes at a sustained 100 Mbps, four to five minutes at 250 Mbps, and about
+one minute at 1 Gbps. These figures exclude bundle processing and working-copy
+update, which are CPU-, memory-, and storage-intensive for this approximately
+one-million-file repository.
+
+At the observed 4.98 MB/s on `aerickson-hg-benchmarking`, the bundle transfer
+took 22m 27.7s. A sub-30-minute completed clone on its 1-vCPU, 1-GB
+`e2.micro` instance would therefore be optimistic, and failure during the
+working-copy update is consistent with memory pressure.
+
+The 40-minute Taskcluster timeouts warrant investigation, but their incomplete
+logs do not yet isolate a network, CPU, storage, memory, or clone-bundle
+selection cause.
 
 ## Observations
 
