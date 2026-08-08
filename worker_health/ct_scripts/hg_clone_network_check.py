@@ -11,6 +11,7 @@ from __future__ import print_function
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import platform
@@ -24,15 +25,29 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-import venv
 
 
-# Change this deliberately.  All compared runs must use the same version.
-MERCURIAL_VERSION = "7.0.2"
+# Change these deliberately. All compared runs must use the same named
+# configuration and its pinned component versions.
+CONFIGURATIONS = {
+    "latest-without-robust-checkout": {
+        "mercurial_version": "7.0.2",
+        "python_command": "python3",
+        "python_manager": "system",
+        "robustcheckout_revision": None,
+    },
+    "bitbar-docker-with-robustcheckout": {
+        "mercurial_version": "5.9.3",
+        "python_command": "3.9",
+        "python_manager": "uv",
+        "robustcheckout_revision": "260e22f03e984e0ced16b6c5ff63201cdef0a1f6",  # pragma: allowlist secret
+    },
+}
+DEFAULT_CONFIGURATION = "latest-without-robust-checkout"
 # Increment the patch version when a change affects benchmark behavior,
 # measurements, or output. Formatting-only changes do not require a bump.
 # Bump minor or major when the result schema changes incompatibly.
-SCRIPT_VERSION = "1.0.1"
+SCRIPT_VERSION = "1.1.0"
 DEFAULT_REPOSITORY_URL = "https://hg-edge.mozilla.org/mozilla-unified"
 RESULT_SCHEMA_VERSION = 1
 
@@ -58,9 +73,15 @@ def parse_args():
         help="New clone destination (must not already exist).",
     )
     parser.add_argument("--output-dir", default="hg-clone-network-check-" + timestamp)
-    parser.add_argument("--venv-dir", default=os.path.join(default_cache_dir(), "venv-mercurial-" + MERCURIAL_VERSION))
+    parser.add_argument("--configuration", choices=sorted(CONFIGURATIONS), default=DEFAULT_CONFIGURATION)
+    parser.add_argument("--venv-dir", help="Override the configuration-specific virtualenv path.")
     parser.add_argument("--skip-update", action="store_true", help="Only run 'hg clone --noupdate'.")
     parser.add_argument("--skip-public-ip", action="store_true")
+    parser.add_argument(
+        "--install-system-dependencies",
+        action="store_true",
+        help="Install missing interpreter support before provisioning (apt for system Python; uv for Bitbar Python).",
+    )
     return parser.parse_args()
 
 
@@ -81,23 +102,175 @@ def hg_version(hg_path):
     return match.group(1)
 
 
-def provision_hg(venv_dir):
+def default_venv_dir(configuration_name, configuration):
+    return os.path.join(
+        default_cache_dir(),
+        "venv-{}-mercurial-{}-{}".format(
+            configuration_name,
+            configuration["mercurial_version"],
+            configuration["python_command"],
+        ),
+    )
+
+
+def provision_hg(venv_dir, configuration, python_command):
+    expected_version = configuration["mercurial_version"]
     hg_path = os.path.join(venv_dir, "bin", "hg")
+    python_path = os.path.join(venv_dir, "bin", "python")
     if os.path.isfile(hg_path):
         installed_version = hg_version(hg_path)
-        if installed_version == MERCURIAL_VERSION:
-            return hg_path, False
+        if installed_version == expected_version:
+            return hg_path, python_path, False
 
     if os.path.exists(venv_dir):
         shutil.rmtree(venv_dir)
-    print("Provisioning Mercurial {} in {}...".format(MERCURIAL_VERSION, venv_dir), file=sys.stderr)
-    venv.EnvBuilder(with_pip=True).create(venv_dir)
-    python_path = os.path.join(venv_dir, "bin", "python")
-    run_checked([python_path, "-m", "pip", "install", "--disable-pip-version-check", "mercurial==" + MERCURIAL_VERSION])
+    print("Provisioning Mercurial {} in {}...".format(expected_version, venv_dir), file=sys.stderr)
+    try:
+        run_checked([python_command, "-m", "venv", venv_dir])
+    except FileNotFoundError as exc:
+        raise RuntimeError("required Python interpreter is unavailable: {}".format(python_command)) from exc
+    run_checked([python_path, "-m", "pip", "install", "--disable-pip-version-check", "mercurial==" + expected_version])
     installed_version = hg_version(hg_path)
-    if installed_version != MERCURIAL_VERSION:
-        raise RuntimeError("expected Mercurial {}, found {}".format(MERCURIAL_VERSION, installed_version))
-    return hg_path, True
+    if installed_version != expected_version:
+        raise RuntimeError("expected Mercurial {}, found {}".format(expected_version, installed_version))
+    return hg_path, python_path, True
+
+
+def resolve_python(configuration, install_missing):
+    if configuration["python_manager"] == "system":
+        if shutil.which(configuration["python_command"]) is None:
+            raise RuntimeError("required Python interpreter is unavailable: {}".format(configuration["python_command"]))
+        return configuration["python_command"]
+
+    if shutil.which("uv") is None:
+        raise RuntimeError(
+            "the Bitbar Docker configuration requires uv on PATH to manage Python {}".format(
+                configuration["python_command"],
+            ),
+        )
+    find = subprocess.run(
+        ["uv", "python", "find", configuration["python_command"]],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if find.returncode:
+        if not install_missing:
+            raise RuntimeError(
+                "Python {} is unavailable; rerun with --install-system-dependencies to install it with uv".format(
+                    configuration["python_command"],
+                ),
+            )
+        print(
+            "Installing Bitbar-compatible Python {} with uv...".format(configuration["python_command"]),
+            file=sys.stderr,
+        )
+        subprocess.run(["uv", "python", "install", configuration["python_command"]], check=True)
+        find = subprocess.run(
+            ["uv", "python", "find", configuration["python_command"]],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    return find.stdout.strip()
+
+
+def install_system_dependencies(configuration):
+    if configuration["python_manager"] == "uv":
+        return
+    if not (sys.platform.startswith("linux") and os.path.exists("/etc/debian_version")):
+        raise RuntimeError("--install-system-dependencies is supported only on Debian/Ubuntu hosts")
+    print("Updating apt package metadata...", file=sys.stderr)
+    subprocess.run(["sudo", "apt-get", "update"], check=True)
+    print("Installing python3-venv...", file=sys.stderr)
+    subprocess.run(["sudo", "apt-get", "install", "--yes", "python3-venv"], check=True)
+
+
+def robustcheckout_source(revision):
+    source_directory = os.path.join(default_cache_dir(), "sources")
+    source_path = os.path.join(source_directory, "robustcheckout-{}.py".format(revision))
+    if not os.path.isfile(source_path):
+        os.makedirs(source_directory, exist_ok=True)
+        url = "https://hg.mozilla.org/mozilla-central/raw-file/{}/testing/mozharness/external_tools/robustcheckout.py".format(
+            revision,
+        )
+        print("Fetching robustcheckout.py at {}...".format(revision), file=sys.stderr)
+        with urllib.request.urlopen(url, timeout=60) as response, open(source_path, "wb") as output:
+            shutil.copyfileobj(response, output)
+    with open(source_path, "rb") as source_file:
+        digest = hashlib.sha256(source_file.read()).hexdigest()
+    return source_path, digest
+
+
+def write_hgrc(output_dir, configuration):
+    hgrc_path = os.path.join(output_dir, "benchmark.hgrc")
+    revision = configuration["robustcheckout_revision"]
+    if revision is None:
+        with open(hgrc_path, "w"):
+            pass
+        return {"HGRCPATH": os.path.basename(hgrc_path)}
+
+    robustcheckout_path, digest = robustcheckout_source(revision)
+    with open(hgrc_path, "w") as output:
+        output.write(
+            """[progress]
+delay = 1.0
+refresh = 1.0
+assume-tty = true
+
+[extensions]
+share =
+sparse =
+robustcheckout = {robustcheckout_path}
+
+[hostsecurity]
+minimumprotocol = tls1.2
+
+[diff]
+git = 1
+showfunc = 1
+
+[pager]
+pager = LESS=FRSXQ less
+
+[extensions]
+histedit =
+rebase =
+""".format(robustcheckout_path=robustcheckout_path),
+        )
+    return {
+        "HGRCPATH": os.path.basename(hgrc_path),
+        "robustcheckout": {
+            "revision": revision,
+            "path": robustcheckout_path,
+            "sha256": digest,
+        },
+    }
+
+
+def verify_robustcheckout_configuration(hg_path, environment, hgrc_details):
+    completed = subprocess.run(
+        [hg_path, "showconfig", "extensions.robustcheckout"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    if completed.returncode not in (0, 1):
+        raise RuntimeError("could not inspect robustcheckout configuration: {}".format(completed.stderr.strip()))
+
+    actual = completed.stdout.strip()
+    if actual.startswith("extensions.robustcheckout="):
+        actual = actual.partition("=")[2]
+    expected = hgrc_details.get("robustcheckout", {}).get("path")
+    if expected is None and actual:
+        raise RuntimeError("robustcheckout is unexpectedly enabled: {}".format(actual))
+    if expected is not None and actual != expected:
+        raise RuntimeError("robustcheckout does not match the configured path: {}".format(actual))
+
+    hgrc_details["effective_robustcheckout"] = actual or None
+    return hgrc_details
 
 
 def cpu_model():
@@ -230,6 +403,7 @@ def write_summary(path, results):
         "Mercurial clone network check",
         "started: {}".format(results["benchmark_started_at"]),
         "host: {}".format(results["metadata"]["hostname"]),
+        "configuration: {}".format(results["configuration"]["name"]),
         "Mercurial: {}".format(results.get("mercurial_version", "not provisioned")),
     ]
     for name, phase in results["phases"].items():
@@ -241,6 +415,11 @@ def write_summary(path, results):
 
 def main():
     args = parse_args()
+    print("Python: {}".format(sys.version.replace("\n", " ")), file=sys.stderr)
+    configuration = CONFIGURATIONS[args.configuration]
+    if args.venv_dir is None:
+        args.venv_dir = default_venv_dir(args.configuration, configuration)
+    print("Configuration: {}".format(args.configuration), file=sys.stderr)
     destination = os.path.abspath(args.destination)
     output_dir = os.path.abspath(args.output_dir)
     destination_parent = os.path.dirname(destination)
@@ -255,8 +434,15 @@ def main():
     results = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "script_version": SCRIPT_VERSION,
+        "python_version": sys.version,
+        "configuration": {
+            "name": args.configuration,
+            "mercurial_version": configuration["mercurial_version"],
+            "python_command": configuration["python_command"],
+            "python_manager": configuration["python_manager"],
+        },
         "benchmark_started_at": utc_now(),
-        "mercurial_requested_version": MERCURIAL_VERSION,
+        "mercurial_requested_version": configuration["mercurial_version"],
         "repository_url": args.repo_url,
         "destination": destination,
         "metadata": host_metadata(destination_parent, args.repo_url),
@@ -266,15 +452,28 @@ def main():
         results["metadata"]["public_ip"] = public_ip()
 
     try:
-        hg_path, provisioned = provision_hg(os.path.abspath(args.venv_dir))
+        python_command = resolve_python(configuration, args.install_system_dependencies)
+        if args.install_system_dependencies:
+            install_system_dependencies(configuration)
+        hg_path, mercurial_python_path, provisioned = provision_hg(
+            os.path.abspath(args.venv_dir),
+            configuration,
+            python_command,
+        )
+        results["configuration"]["resolved_python"] = python_command
         results["mercurial_path"] = hg_path
+        results["mercurial_python_path"] = mercurial_python_path
+        results["mercurial_python_version"] = run_checked([mercurial_python_path, "--version"])
         results["mercurial_version"] = hg_version(hg_path)
         results["venv_provisioned_this_run"] = provisioned
-        hgrc_path = os.path.join(output_dir, "benchmark.hgrc")
-        with open(hgrc_path, "w"):
-            pass
+        hgrc_details = write_hgrc(output_dir, configuration)
+        hgrc_path = os.path.join(output_dir, hgrc_details["HGRCPATH"])
         environment = dict(os.environ, HGRCPATH=hgrc_path)
-        results["mercurial_configuration"] = {"HGRCPATH": os.path.basename(hgrc_path)}
+        results["mercurial_configuration"] = verify_robustcheckout_configuration(
+            hg_path,
+            environment,
+            hgrc_details,
+        )
 
         clone = run_phase(
             "clone",
