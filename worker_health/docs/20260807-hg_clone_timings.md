@@ -52,14 +52,14 @@ What factors account for differences in `hg clone` duration across workers?
 
 ## GCP baseline setup
 
-The Ubuntu 24.04 `e2.micro` baseline was created in
+The replacement Ubuntu 24.04 `e2-standard-2` baseline is created in
 `taskcluster-imaging/us-east1-b` with this command:
 
 ```bash
-gcloud compute instances create hg-clone-benchmark-20260807-1715 \
+gcloud compute instances create aerickson-hg-clone-benchmark-20260807-standard2 \
   --project taskcluster-imaging \
   --zone us-east1-b \
-  --machine-type e2-micro \
+  --machine-type e2-standard-2 \
   --image-family ubuntu-2404-lts-amd64 \
   --image-project ubuntu-os-cloud \
   --boot-disk-size 50GB \
@@ -68,14 +68,47 @@ gcloud compute instances create hg-clone-benchmark-20260807-1715 \
 ```
 
 The 50-GB disk provides room for the clone, working copy, and benchmark
-artifacts. The instance name is intentionally timestamped and should be
-deleted when this baseline run is no longer needed.
+artifacts. Benchmark instance names must begin with `aerickson-` and should be
+timestamped or otherwise uniquely identified. Delete the instance when its
+baseline run is no longer needed.
 
 ## Measurements
 
 All runs cloned `https://hg-edge.mozilla.org/mozilla-unified`. The Taskcluster
 runs were stopped by their 40-minute maximum runtime, so their durations are
 lower bounds rather than successful clone timings.
+
+## Bitbar Mercurial tooling
+
+The Bitbar Docker image installs a pinned Mercurial version:
+
+```text
+/Users/aerickson/git/mozilla-bitbar-docker/Dockerfile:192
+pip3 install mercurial==5.9.3
+```
+
+It fetches `robustcheckout.py` directly from `mozilla-central` at revision
+`260e22f03e984e0ced16b6c5ff63201cdef0a1f6`; no separate extension version is
+declared:
+
+```text
+/Users/aerickson/git/mozilla-bitbar-docker/Dockerfile:95
+ADD https://hg.mozilla.org/mozilla-central/raw-file/260e22f03e984e0ced16b6c5ff63201cdef0a1f6/testing/mozharness/external_tools/robustcheckout.py /usr/local/src/robustcheckout.py
+```
+
+The extension is enabled by the Bitbar Taskcluster configuration:
+
+```text
+/Users/aerickson/git/mozilla-bitbar-docker/taskcluster/hgrc:13
+[extensions]
+robustcheckout = /usr/local/src/robustcheckout.py
+```
+
+The Dockerfile installs this configuration system-wide at
+`/etc/mercurial/hgrc.d/mozilla.rc` (`Dockerfile:115`).
+
+The timeout task shown above invokes bare `hg clone`; enabling the extension
+does not by itself establish that the task invoked a `robustcheckout` command.
 
 | Date/time (UTC) | Worker | Command | Observed duration | Outcome |
 | --- | --- | --- | ---: | --- |
@@ -124,7 +157,7 @@ storage performance.
 
 | Worker profile | Reasonable end-to-end range |
 | --- | ---: |
-| 1 vCPU / 1 GB VM with modest network | 25–60+ minutes; may run out of memory |
+| Shared-core VM with 1 GB RAM and modest network | 25–60+ minutes; may run out of memory |
 | Typical CI worker with 4+ cores and SSD storage | 8–20 minutes |
 | Fast network, NVMe storage, and ample CPU/RAM | 4–10 minutes |
 
@@ -135,9 +168,21 @@ update, which are CPU-, memory-, and storage-intensive for this approximately
 one-million-file repository.
 
 At the observed 4.98 MB/s on `aerickson-hg-benchmarking`, the bundle transfer
-took 22m 27.7s. A sub-30-minute completed clone on its 1-vCPU, 1-GB
+took 22m 27.7s. A sub-30-minute completed clone on a 1-GB shared-core
 `e2.micro` instance would therefore be optimistic, and failure during the
 working-copy update is consistent with memory pressure.
+
+During the current GCP baseline run, the load average was observed to peak at
+approximately 14. Load average includes runnable and uninterruptible (often
+I/O-waiting) tasks, so this alone does not distinguish CPU saturation from
+storage or memory pressure. Capture CPU utilization, memory/swap state, and
+disk I/O alongside future runs.
+
+The `e2.micro` is not suitable for a complete clone baseline: its 1 GB of RAM
+caused substantial kernel memory-reclaim activity (`kswapd`) and made the host
+non-responsive during the run. Use at least a non-shared-core `e2-standard-2`
+(2 vCPUs, 8 GB RAM) for a baseline intended to separate clone/network behavior
+from VM resource exhaustion.
 
 The 40-minute Taskcluster timeouts warrant investigation, but their incomplete
 logs do not yet isolate a network, CPU, storage, memory, or clone-bundle
@@ -147,6 +192,12 @@ selection cause.
 
 - The standalone benchmark completed the bundle-transfer and bundle-application
   phases within 23m 43s, but did not complete the working-copy update.
+- The earlier `e2.micro` bare `hg clone` did not complete either: its captured
+  output ends in `Killed` during `updating to branch default`. The new runner's
+  small Python wrapper and log capture are not a plausible explanation for the
+  memory pressure; the key differences may instead include the Mercurial
+  version, repository/bundle growth, available memory/cache, background work,
+  or variable shared-core CPU availability.
 - Neither Taskcluster worker completed within the 40-minute task limit.
 - The two Taskcluster logs stopped in different phases: `s24-02` while adding
   changesets and `t-linux64-ms-012` while adding files.
@@ -156,6 +207,9 @@ selection cause.
 - Use `./ct_scripts/hg_clone_network_check.py` for future runs. Treat its
   output as the standardized results format, and improve the script as new
   measurements reveal missing context or useful diagnostics.
+- On a fresh Ubuntu image that lacks `ensurepip`, invoke the runner with
+  `--install-system-dependencies`; it runs `sudo apt-get update` and installs
+  `python3-venv` before creating the isolated Mercurial virtual environment.
 - Run successful, comparable clones with a duration that exceeds the observed
   completion time, and capture the Mercurial version and configuration.
 - Separate and time bundle download, bundle application, post-bundle change
