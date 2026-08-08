@@ -21,6 +21,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -47,7 +48,7 @@ DEFAULT_CONFIGURATION = "latest-without-robust-checkout"
 # Increment the patch version when a change affects benchmark behavior,
 # measurements, or output. Formatting-only changes do not require a bump.
 # Bump minor or major when the result schema changes incompatibly.
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.1.3"
 DEFAULT_REPOSITORY_URL = "https://hg-edge.mozilla.org/mozilla-unified"
 RESULT_SCHEMA_VERSION = 1
 
@@ -136,20 +137,43 @@ def provision_hg(venv_dir, configuration, python_command):
     return hg_path, python_path, True
 
 
+def install_uv():
+    print("Installing uv...", file=sys.stderr)
+    request = urllib.request.Request(
+        "https://astral.sh/uv/install.sh",
+        headers={"User-Agent": "hg-clone-network-check/{}".format(SCRIPT_VERSION)},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        installer = response.read()
+    with tempfile.NamedTemporaryFile("wb", delete=False) as installer_file:
+        installer_file.write(installer)
+        installer_path = installer_file.name
+    try:
+        subprocess.run(["sh", installer_path], check=True)
+    finally:
+        os.unlink(installer_path)
+
+    for candidate in (os.path.expanduser("~/.local/bin/uv"), os.path.expanduser("~/.cargo/bin/uv")):
+        if os.path.isfile(candidate):
+            return candidate
+    raise RuntimeError("uv installation completed but its executable was not found")
+
+
 def resolve_python(configuration, install_missing):
     if configuration["python_manager"] == "system":
         if shutil.which(configuration["python_command"]) is None:
             raise RuntimeError("required Python interpreter is unavailable: {}".format(configuration["python_command"]))
-        return configuration["python_command"]
+        return configuration["python_command"], None
 
-    if shutil.which("uv") is None:
-        raise RuntimeError(
-            "the Bitbar Docker configuration requires uv on PATH to manage Python {}".format(
-                configuration["python_command"],
-            ),
-        )
+    uv_path = shutil.which("uv")
+    if uv_path is None:
+        if not install_missing:
+            raise RuntimeError(
+                "the Bitbar Docker configuration requires uv on PATH; rerun with --install-system-dependencies",
+            )
+        uv_path = install_uv()
     find = subprocess.run(
-        ["uv", "python", "find", configuration["python_command"]],
+        [uv_path, "python", "find", configuration["python_command"]],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -165,24 +189,26 @@ def resolve_python(configuration, install_missing):
             "Installing Bitbar-compatible Python {} with uv...".format(configuration["python_command"]),
             file=sys.stderr,
         )
-        subprocess.run(["uv", "python", "install", configuration["python_command"]], check=True)
+        subprocess.run([uv_path, "python", "install", configuration["python_command"]], check=True)
         find = subprocess.run(
-            ["uv", "python", "find", configuration["python_command"]],
+            [uv_path, "python", "find", configuration["python_command"]],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=True,
         )
-    return find.stdout.strip()
+    return find.stdout.strip(), run_checked([uv_path, "--version"])
 
 
 def install_system_dependencies(configuration):
-    if configuration["python_manager"] == "uv":
-        return
     if not (sys.platform.startswith("linux") and os.path.exists("/etc/debian_version")):
         raise RuntimeError("--install-system-dependencies is supported only on Debian/Ubuntu hosts")
     print("Updating apt package metadata...", file=sys.stderr)
     subprocess.run(["sudo", "apt-get", "update"], check=True)
+    if configuration["python_manager"] == "uv":
+        print("Installing C build tools for Mercurial 5.9.3...", file=sys.stderr)
+        subprocess.run(["sudo", "apt-get", "install", "--yes", "build-essential"], check=True)
+        return
     print("Installing python3-venv...", file=sys.stderr)
     subprocess.run(["sudo", "apt-get", "install", "--yes", "python3-venv"], check=True)
 
@@ -452,7 +478,9 @@ def main():
         results["metadata"]["public_ip"] = public_ip()
 
     try:
-        python_command = resolve_python(configuration, args.install_system_dependencies)
+        python_command, uv_version = resolve_python(configuration, args.install_system_dependencies)
+        if uv_version is not None:
+            results["configuration"]["uv_version"] = uv_version
         if args.install_system_dependencies:
             install_system_dependencies(configuration)
         hg_path, mercurial_python_path, provisioned = provision_hg(

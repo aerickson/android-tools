@@ -110,11 +110,48 @@ The Dockerfile installs this configuration system-wide at
 The timeout task shown above invokes bare `hg clone`; enabling the extension
 does not by itself establish that the task invoked a `robustcheckout` command.
 
+## Benchmark configurations
+
+`hg_clone_network_check.py` selects a named, pinned configuration with
+`--configuration` and records the effective configuration in `results.json`.
+
+| Configuration | Mercurial | Python | Per-run hgrc |
+| --- | --- | --- | --- |
+| `latest-without-robust-checkout` (default) | `7.0.2` | System `python3` | Empty `HGRCPATH`; the script verifies that `robustcheckout` is not enabled. |
+| `bitbar-docker-with-robustcheckout` | `5.9.3` | Python `3.9`, resolved or installed through `uv` | Bitbar's progress, extension, host-security, diff, and pager settings; the script fetches the fixed `robustcheckout.py` revision and verifies it is enabled. |
+
+The configuration name is intentionally stable while the exact component
+versions remain explicit in the script and result data. The Bitbar
+configuration mirrors the image's pinned Python 3.9 and Mercurial 5.9.3 rather
+than using the Ubuntu 24.04 system Python.
+
 | Date/time (UTC) | Worker | Command | Observed duration | Outcome |
 | --- | --- | --- | ---: | --- |
 | 2026-08-07 (time not recorded) | `aerickson-hg-benchmarking` | `time hg clone https://hg-edge.mozilla.org/mozilla-unified` | 23m 43.376s | Killed after the clone bundle had been applied and the working copy was being updated. |
 | 2026-08-07 20:04:36–20:44:37 | `bitbar/s24-02` | `hg clone https://hg-edge.mozilla.org/mozilla-unified` | 40m 01s | Taskcluster aborted the task at its 40-minute maximum while adding changesets. |
 | 2026-08-07 22:55:59–23:35:51 | `mdc1/t-linux64-ms-012` | `hg clone https://hg-edge.mozilla.org/mozilla-unified` | 40m 00s | Taskcluster aborted the task at its 40-minute maximum while adding files. |
+| 2026-08-08 01:13:26–01:21:36 | `aerickson-hg-clone-benchmark-20260807-standard2` | `hg clone --noupdate`, then `hg update` | 8m 09.713s | Successful complete clone and working-copy update. |
+
+### `aerickson-hg-clone-benchmark-20260807-standard2`
+
+The Ubuntu 24.04 GCP `e2-standard-2` baseline completed successfully using
+the `latest-without-robust-checkout` configuration: `hg_clone_network_check.py`
+version `1.0.4`, Mercurial `7.0.2`, and Python `3.12.3`. The runner used an
+empty per-run `HGRCPATH` (`benchmark.hgrc`) to avoid user configuration
+affecting the result.
+
+| Phase | Elapsed | Child user CPU | Child system CPU | Exit |
+| --- | ---: | ---: | ---: | ---: |
+| `hg clone --noupdate` | 2m 34.675s | 95.381s | 47.560s | 0 |
+| `hg update` | 5m 35.037s | 468.478s | 133.208s | 0 |
+| Total Mercurial phases | 8m 09.713s | 563.860s | 180.768s | 0 |
+
+The host had two vCPUs, 8 GB RAM, a 50-GB balanced persistent disk, and public
+IP `35.229.52.135`. The completed destination occupied 10,870,455,572 bytes.
+The runner started at 01:12:52 UTC and finished at 01:22:07 UTC; that broader
+9m 15s interval includes package provisioning before the clone and final
+directory-size collection after the update. The phase total is the comparable
+clone timing.
 
 ### `aerickson-hg-benchmarking`
 
@@ -192,6 +229,10 @@ selection cause.
 
 - The standalone benchmark completed the bundle-transfer and bundle-application
   phases within 23m 43s, but did not complete the working-copy update.
+- The controlled `e2-standard-2` baseline completed both Mercurial phases in
+  8m 09.713s. This demonstrates that a GCP worker with adequate dedicated CPU
+  and memory can complete the operation well below the 40-minute Taskcluster
+  limit.
 - The earlier `e2.micro` bare `hg clone` did not complete either: its captured
   output ends in `Killed` during `updating to branch default`. The new runner's
   small Python wrapper and log capture are not a plausible explanation for the
@@ -207,9 +248,13 @@ selection cause.
 - Use `./ct_scripts/hg_clone_network_check.py` for future runs. Treat its
   output as the standardized results format, and improve the script as new
   measurements reveal missing context or useful diagnostics.
-- On a fresh Ubuntu image that lacks `ensurepip`, invoke the runner with
-  `--install-system-dependencies`; it runs `sudo apt-get update` and installs
-  `python3-venv` before creating the isolated Mercurial virtual environment.
+- On a fresh Ubuntu image that lacks `ensurepip`, invoke the default
+  configuration with `--install-system-dependencies`; it runs `sudo apt-get
+  update` and installs `python3-venv` before creating the isolated Mercurial
+  virtual environment. For `bitbar-docker-with-robustcheckout`, the same flag
+  installs `uv` when needed, then allows it to install its managed Python 3.9
+  runtime without changing APT sources; it also installs `build-essential`,
+  because Mercurial 5.9.3 is built from source on this host.
 - Run successful, comparable clones with a duration that exceeds the observed
   completion time, and capture the Mercurial version and configuration.
 - Separate and time bundle download, bundle application, post-bundle change
