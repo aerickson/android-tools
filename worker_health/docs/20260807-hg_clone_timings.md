@@ -119,11 +119,21 @@ does not by itself establish that the task invoked a `robustcheckout` command.
 | --- | --- | --- | --- |
 | `latest-without-robust-checkout` (default) | `7.0.2` | System `python3` | Empty `HGRCPATH`; the script verifies that `robustcheckout` is not enabled. |
 | `bitbar-docker-with-robustcheckout` | `5.9.3` | Python `3.9`, resolved or installed through `uv` | Bitbar's progress, extension, host-security, diff, and pager settings; the script fetches the fixed `robustcheckout.py` revision and verifies it is enabled. |
+| `latest-with-robustcheckout` | `7.0.2` | System `python3` | The same extension-oriented settings, with `robustcheckout` pinned to the current canonical version-control-tools revision `ef45ece67c97ba67a13182c97496d8a90b768eea`. |
 
 The configuration name is intentionally stable while the exact component
 versions remain explicit in the script and result data. The Bitbar
 configuration mirrors the image's pinned Python 3.9 and Mercurial 5.9.3 rather
 than using the Ubuntu 24.04 system Python.
+
+The canonical current `robustcheckout` declares `minimumhgversion = b"4.5"`
+and has no declared upper bound. Its source includes compatibility handling for
+Mercurial 6.4 and 7.2 API changes. The `latest-with-robustcheckout`
+configuration therefore tests the same Mercurial 7.0.2 and system Python 3.12
+as the latest baseline, with the extension pinned at the latest extension-file
+revision when this configuration was added. Mozilla's CI documentation advises
+updating vendored `robustcheckout` alongside Mercurial upgrades because it uses
+Mercurial internals.
 
 | Date/time (UTC) | Worker | Command | Observed duration | Outcome |
 | --- | --- | --- | ---: | --- |
@@ -131,6 +141,9 @@ than using the Ubuntu 24.04 system Python.
 | 2026-08-07 20:04:36–20:44:37 | `bitbar/s24-02` | `hg clone https://hg-edge.mozilla.org/mozilla-unified` | 40m 01s | Taskcluster aborted the task at its 40-minute maximum while adding changesets. |
 | 2026-08-07 22:55:59–23:35:51 | `mdc1/t-linux64-ms-012` | `hg clone https://hg-edge.mozilla.org/mozilla-unified` | 40m 00s | Taskcluster aborted the task at its 40-minute maximum while adding files. |
 | 2026-08-08 01:13:26–01:21:36 | `aerickson-hg-clone-benchmark-20260807-standard2` | `hg clone --noupdate`, then `hg update` | 8m 09.713s | Successful complete clone and working-copy update. |
+| 2026-08-08 01:57:11–02:06:12 | `aerickson-hg-clone-benchmark-20260807-standard2` | `latest-without-robust-checkout` | 9m 00.622s | Successful complete clone and update; runner verified `robustcheckout` was disabled. |
+| 2026-08-08 02:20:21–02:32:05 | `aerickson-hg-clone-benchmark-20260807-standard2` | `bitbar-docker-with-robustcheckout` | 11m 43.308s | Successful complete clone and update; runner verified the pinned robustcheckout extension was enabled. |
+| 2026-08-10 19:59:51–20:09:25 | `aerickson-hg-clone-benchmark-20260807-standard2` | `latest-with-robustcheckout` | 9m 34.099s | Successful complete clone and update; runner verified the current canonical robustcheckout extension was enabled. |
 
 ### `aerickson-hg-clone-benchmark-20260807-standard2`
 
@@ -152,6 +165,89 @@ The runner started at 01:12:52 UTC and finished at 01:22:07 UTC; that broader
 9m 15s interval includes package provisioning before the clone and final
 directory-size collection after the update. The phase total is the comparable
 clone timing.
+
+### Verified `latest-without-robust-checkout` repeat
+
+The configuration-aware repeat used script version `1.1.3` and verified that
+the effective `robustcheckout` extension value was null. It used the same
+Mercurial (`7.0.2`), Python (`3.12.3`), host, and repository as the initial
+`e2-standard-2` baseline.
+
+| Phase | Elapsed | Child user CPU | Child system CPU | Exit |
+| --- | ---: | ---: | ---: | ---: |
+| `hg clone --noupdate` | 3m 14.187s | 107.003s | 66.391s | 0 |
+| `hg update` | 5m 46.435s | 486.156s | 143.491s | 0 |
+| Total Mercurial phases | 9m 00.622s | 593.159s | 209.882s | 0 |
+
+The phase total was 50.910s (10.4%) slower than the first successful
+`e2-standard-2` run, while still completing successfully. The runner started
+at 01:56:54 UTC and finished at 02:06:35 UTC; its total interval includes
+setup and final directory-size collection outside the measured phases.
+
+### `bitbar-docker-with-robustcheckout` comparison
+
+The Bitbar-component configuration completed successfully with script version
+`1.1.3`, Mercurial `5.9.3`, and `uv`-managed Python `3.9.25`. It verified that
+the effective `robustcheckout` extension path was the fetched source at
+revision `260e22f03e984e0ced16b6c5ff63201cdef0a1f6`, with SHA-256
+`91cef21a3db52aedd3b3ba8b4c6b9d9b24e7c416ab80d10d58312960d226c095`.
+
+| Phase | Elapsed | Child user CPU | Child system CPU | Exit |
+| --- | ---: | ---: | ---: | ---: |
+| `hg clone --noupdate` | 4m 43.215s | 194.187s | 74.583s | 0 |
+| `hg update` | 7m 00.093s | 595.980s | 153.017s | 0 |
+| Total Mercurial phases | 11m 43.308s | 790.167s | 227.599s | 0 |
+
+This is a component-equivalent comparison, not a byte-for-byte rebuild of the
+Bitbar Docker image: it ran on Ubuntu 24.04 with a `uv`-managed Python runtime.
+Its phase total was 2m 42.686s (30.1%) slower than the verified
+`latest-without-robust-checkout` repeat on the same host. The runner started at
+02:15:26 UTC and finished at 02:32:28 UTC; this broader interval includes
+dependency setup and final directory-size collection outside the measured
+phases.
+
+### Repeated interleaved configuration comparison
+
+On 2026-08-10, the comparison runner performed three successful runs of each
+configuration on `aerickson-hg-clone-benchmark-20260807-standard2`. It
+alternated configuration order (`latest`, `Bitbar`, `Bitbar`, `latest`,
+`latest`, `Bitbar`) and removed each clone worktree before starting the next
+run. The runner version was `1.1.3`; all latest runs verified that
+`robustcheckout` was disabled and all Bitbar-component runs verified the pinned
+extension was enabled.
+
+| Configuration | Clone median (range) | Update median (range) | Total median (range) |
+| --- | ---: | ---: | ---: |
+| `latest-without-robust-checkout` | 3m 07.870s (3m 04.285s–3m 10.198s) | 5m 53.283s (5m 45.534s–5m 54.088s) | 9m 01.153s (8m 49.819s–9m 04.286s) |
+| `bitbar-docker-with-robustcheckout` | 4m 57.151s (4m 44.746s–4m 58.658s) | 7m 06.821s (7m 05.771s–7m 15.017s) | 12m 03.972s (11m 59.764s–12m 04.430s) |
+
+The Bitbar-component configuration's median was 3m 02.819s (33.8%) slower
+than the latest/no-robustcheckout median. The difference appears in both
+measured phases: its median clone was 1m 49.282s slower (58.2%), and its
+median update was 1m 12.488s slower (20.5%). This isolates a stable
+configuration/component effect on this GCP host; it does not establish that
+the same effect explains the Bitbar timeout, where network location and worker
+resources differ.
+
+### `latest-with-robustcheckout` result
+
+The current canonical extension configuration completed successfully with
+script version `1.1.4`, Mercurial `7.0.2`, and Python `3.12.3`, matching the
+latest/no-robustcheckout component versions. It enabled robustcheckout revision
+`ef45ece67c97ba67a13182c97496d8a90b768eea` from version-control-tools, with
+SHA-256 `f39b5c1ea940956aded51609e6abb7089b6a000b0c9c1f4094378de337e93ab4`.
+
+| Phase | Elapsed | Child user CPU | Child system CPU | Exit |
+| --- | ---: | ---: | ---: | ---: |
+| `hg clone --noupdate` | 3m 36.911s | 120.652s | 77.723s | 0 |
+| `hg update` | 5m 57.189s | 500.209s | 145.344s | 0 |
+| Total Mercurial phases | 9m 34.099s | 620.860s | 223.067s | 0 |
+
+This single result is 32.946s (6.1%) slower than the three-run
+`latest-without-robustcheckout` median. Most of that difference is in clone
+(29.041s); update differs by only 3.906s. It is above the no-robustcheckout
+three-run total range (8m 49.819s–9m 04.286s), but needs interleaved repeats
+before treating the size of this effect as established.
 
 ### `aerickson-hg-benchmarking`
 
@@ -233,6 +329,17 @@ selection cause.
   8m 09.713s. This demonstrates that a GCP worker with adequate dedicated CPU
   and memory can complete the operation well below the 40-minute Taskcluster
   limit.
+- The configuration-aware `latest-without-robust-checkout` repeat completed in
+  9m 00.622s and verified that the robustcheckout extension was disabled.
+- The Bitbar-component configuration completed in 11m 43.308s with the pinned
+  robustcheckout extension enabled, 30.1% slower than the verified
+  no-robustcheckout repeat on the same host.
+- Three interleaved repeats confirmed this configuration difference: the
+  Bitbar-component median was 12m 03.972s versus 9m 01.153s for
+  latest/no-robustcheckout, a 33.8% increase.
+- A single latest-Hg run with the current canonical robustcheckout extension
+  completed in 9m 34.099s (6.1% above the no-robustcheckout median); repeat it
+  interleaved with the baseline before drawing a quantitative conclusion.
 - The earlier `e2.micro` bare `hg clone` did not complete either: its captured
   output ends in `Killed` during `updating to branch default`. The new runner's
   small Python wrapper and log capture are not a plausible explanation for the
@@ -248,6 +355,13 @@ selection cause.
 - Use `./ct_scripts/hg_clone_network_check.py` for future runs. Treat its
   output as the standardized results format, and improve the script as new
   measurements reveal missing context or useful diagnostics.
+- For an unattended comparison of the two named configurations, use
+  `./ct_scripts/hg_clone_configuration_comparison.py --install-system-dependencies`.
+  It performs three runs of each configuration in alternating order, retains
+  each run's logs and `results.json`, removes only the corresponding disposable
+  clone worktree between runs, and writes aggregate JSON plus a Markdown
+  summary. The comparison script requires `hg_clone_network_check.py` beside it
+  (or at `~/hg_clone_network_check.py` when copied to a benchmark host).
 - On a fresh Ubuntu image that lacks `ensurepip`, invoke the default
   configuration with `--install-system-dependencies`; it runs `sudo apt-get
   update` and installs `python3-venv` before creating the isolated Mercurial
@@ -257,6 +371,8 @@ selection cause.
   because Mercurial 5.9.3 is built from source on this host.
 - Run successful, comparable clones with a duration that exceeds the observed
   completion time, and capture the Mercurial version and configuration.
+- Run `latest-with-robustcheckout` to isolate the current canonical extension
+  on the same Mercurial 7.0.2 and Python 3.12 baseline.
 - Separate and time bundle download, bundle application, post-bundle change
   processing, and working-copy update.
 - Capture CPU, memory, storage, and network characteristics for each worker.

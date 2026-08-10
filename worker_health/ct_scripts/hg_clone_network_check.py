@@ -42,13 +42,21 @@ CONFIGURATIONS = {
         "python_command": "3.9",
         "python_manager": "uv",
         "robustcheckout_revision": "260e22f03e984e0ced16b6c5ff63201cdef0a1f6",  # pragma: allowlist secret
+        "robustcheckout_url_template": "https://hg.mozilla.org/mozilla-central/raw-file/{revision}/testing/mozharness/external_tools/robustcheckout.py",
+    },
+    "latest-with-robustcheckout": {
+        "mercurial_version": "7.0.2",
+        "python_command": "python3",
+        "python_manager": "system",
+        "robustcheckout_revision": "ef45ece67c97ba67a13182c97496d8a90b768eea",  # pragma: allowlist secret
+        "robustcheckout_url_template": "https://hg.mozilla.org/hgcustom/version-control-tools/raw-file/{revision}/hgext/robustcheckout/__init__.py",
     },
 }
 DEFAULT_CONFIGURATION = "latest-without-robust-checkout"
 # Increment the patch version when a change affects benchmark behavior,
 # measurements, or output. Formatting-only changes do not require a bump.
 # Bump minor or major when the result schema changes incompatibly.
-SCRIPT_VERSION = "1.1.3"
+SCRIPT_VERSION = "1.1.4"
 DEFAULT_REPOSITORY_URL = "https://hg-edge.mozilla.org/mozilla-unified"
 RESULT_SCHEMA_VERSION = 1
 
@@ -213,14 +221,13 @@ def install_system_dependencies(configuration):
     subprocess.run(["sudo", "apt-get", "install", "--yes", "python3-venv"], check=True)
 
 
-def robustcheckout_source(revision):
+def robustcheckout_source(revision, url_template):
     source_directory = os.path.join(default_cache_dir(), "sources")
-    source_path = os.path.join(source_directory, "robustcheckout-{}.py".format(revision))
+    url = url_template.format(revision=revision)
+    source_id = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+    source_path = os.path.join(source_directory, "robustcheckout-{}-{}.py".format(revision, source_id))
     if not os.path.isfile(source_path):
         os.makedirs(source_directory, exist_ok=True)
-        url = "https://hg.mozilla.org/mozilla-central/raw-file/{}/testing/mozharness/external_tools/robustcheckout.py".format(
-            revision,
-        )
         print("Fetching robustcheckout.py at {}...".format(revision), file=sys.stderr)
         with urllib.request.urlopen(url, timeout=60) as response, open(source_path, "wb") as output:
             shutil.copyfileobj(response, output)
@@ -237,7 +244,7 @@ def write_hgrc(output_dir, configuration):
             pass
         return {"HGRCPATH": os.path.basename(hgrc_path)}
 
-    robustcheckout_path, digest = robustcheckout_source(revision)
+    robustcheckout_path, digest = robustcheckout_source(revision, configuration["robustcheckout_url_template"])
     with open(hgrc_path, "w") as output:
         output.write(
             """[progress]
@@ -271,6 +278,7 @@ rebase =
             "revision": revision,
             "path": robustcheckout_path,
             "sha256": digest,
+            "source_url": configuration["robustcheckout_url_template"].format(revision=revision),
         },
     }
 
