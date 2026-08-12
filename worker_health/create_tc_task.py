@@ -26,6 +26,7 @@ import argparse
 import os
 import json
 import rstr
+import shlex
 import time
 import logging
 import sys
@@ -191,6 +192,11 @@ def parse_args():
         "-s",
         metavar="FILE",
         help="Shell script file to use as the task command (mutually exclusive with --bash-command)",
+    )
+    parser.add_argument(
+        "--script-args",
+        metavar="ARGS",
+        help="Shell-style arguments to append to --script-file (for example: '--configuration bitbar-docker-with-robustcheckout').",
     )
     parser.add_argument(
         "--command-timeout",
@@ -450,9 +456,10 @@ def main_one_off_mode(tcclient, args):
             bar()
 
 
-def _build_command_from_script(script_path):
+def _build_command_from_script(script_path, script_args=None):
     with open(script_path) as f:
         content = f.read().strip()
+    arguments = shlex.split(script_args) if script_args else []
 
     # Detect interpreter from shebang or file extension
     first_line = content.splitlines()[0] if content else ""
@@ -466,10 +473,17 @@ def _build_command_from_script(script_path):
         interpreter = "bash"
 
     if "bash" in interpreter or "sh" in interpreter:
+        if arguments:
+            raise ValueError("--script-args is supported only for non-shell --script-file inputs")
         return content
 
     # For non-bash interpreters, wrap in a heredoc so bash feeds the script correctly
-    return f"{interpreter} << 'SCRIPT_EOF'\n{content}\nSCRIPT_EOF"
+    command = "{} - {} << 'SCRIPT_EOF'\n{}\nSCRIPT_EOF".format(
+        interpreter,
+        " ".join(shlex.quote(argument) for argument in arguments),
+        content,
+    )
+    return command
 
 
 def main():
@@ -482,7 +496,7 @@ def main():
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     if args.script_file:
-        bash_command = _build_command_from_script(args.script_file)
+        bash_command = _build_command_from_script(args.script_file, args.script_args)
     else:
         bash_command = args.bash_command or default_bash_command(args.command_timeout)
 
