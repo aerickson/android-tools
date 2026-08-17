@@ -32,8 +32,7 @@ class Status:
     def wait_until_no_jobs_running(self, hosts, sleep_seconds=15, show_indicator=True):
         we_have_waited = False
         while True:
-            jrd = self.get_hosts_running_jobs(hosts)
-            if len(jrd) == 0:
+            if not self.get_hosts_running_jobs(hosts):
                 if show_indicator and we_have_waited:
                     print("")
                 break
@@ -48,19 +47,22 @@ class Status:
 
     # given list of hosts, return those that are idle (once one is available)
     def wait_for_idle_hosts(self, hosts, sleep_time=15, show_indicator=True):
-        hosts_set = set(hosts)
         while True:
             if show_indicator:
                 print(".", end="", flush=True)
-            hosts_with_non_completed_or_failed_jobs_set = set(self.get_hosts_running_jobs(hosts))
-            hosts_idle = hosts_set - hosts_with_non_completed_or_failed_jobs_set
+            hosts_idle = self.get_idle_hosts(hosts)
             if hosts_idle:
                 if show_indicator:
                     print("")
-                return list(hosts_idle)
+                return hosts_idle
             if show_indicator:
                 print("z", end="", flush=True)
             time.sleep(sleep_time)
+
+    def get_idle_hosts(self, hosts):
+        """Return the supplied hosts which do not currently have running jobs."""
+        busy_hosts = set(self.get_hosts_running_jobs(hosts))
+        return [host for host in hosts if host not in busy_hosts]
 
     def get_hosts_running_jobs(self, hosts, verbose=False):
         worker_groups = self.tc_h.get_worker_groups(self.worker_type)
