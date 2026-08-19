@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 SCRIPT_PATH = Path(__file__).parents[1] / "ct_scripts" / "hg_clone_network_check.py"
@@ -36,3 +37,37 @@ def test_hgrc_environment_uses_absolute_path(tmp_path):
 
     assert environment["HGRCPATH"] == str(tmp_path / "benchmark.hgrc")
     assert os.path.isabs(environment["HGRCPATH"])
+
+
+def test_robustcheckout_command_matches_production_workflow(tmp_path):
+    destination = tmp_path / "gecko"
+    command = hg_clone_network_check.robustcheckout_command(
+        "/path/to/hg",
+        SimpleNamespace(
+            sharebase=None,
+            robustcheckout_upstream_url="https://hg.mozilla.org/mozilla-unified",
+            robustcheckout_sparse_profile="build/sparse-profiles/perftest",
+            robustcheckout_revision="f069124083780d79af44fba3b71699b90a7a63d7",
+            robustcheckout_repository_url="https://hg.mozilla.org/try",
+        ),
+        str(destination),
+        "/path/to/robustcheckout.py",
+    )
+
+    assert command == [
+        "/path/to/hg",
+        "robustcheckout",
+        "--sharebase",
+        str(tmp_path / "hg-shared"),
+        "--purge",
+        "--config",
+        "extensions.robustcheckout=/path/to/robustcheckout.py",
+        "--upstream",
+        "https://hg.mozilla.org/mozilla-unified",
+        "--sparseprofile",
+        "build/sparse-profiles/perftest",
+        "--revision",
+        "f069124083780d79af44fba3b71699b90a7a63d7",
+        "https://hg.mozilla.org/try",
+        str(destination),
+    ]

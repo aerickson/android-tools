@@ -57,11 +57,15 @@ DEFAULT_CONFIGURATION = "latest-without-robust-checkout"
 # Increment the patch version when a change affects benchmark behavior,
 # measurements, or output. Formatting-only changes do not require a bump.
 # Bump minor or major when the result schema changes incompatibly.
-SCRIPT_VERSION = "1.1.7"
+SCRIPT_VERSION = "1.2.0"
 # Match the hg-edge endpoint used by the observed CI clone task. Use
 # hg.mozilla.org only for explicit URL/redirect comparison experiments.
 DEFAULT_REPOSITORY_URL = "https://hg-edge.mozilla.org/mozilla-unified"
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 15
+PRODUCTION_ROBUSTCHECKOUT_REPOSITORY_URL = "https://hg.mozilla.org/try"
+PRODUCTION_ROBUSTCHECKOUT_UPSTREAM_URL = "https://hg.mozilla.org/mozilla-unified"
+PRODUCTION_ROBUSTCHECKOUT_SPARSE_PROFILE = "build/sparse-profiles/perftest"
+PRODUCTION_ROBUSTCHECKOUT_REVISION = "f069124083780d79af44fba3b71699b90a7a63d7"  # pragma: allowlist secret
 RESULT_SCHEMA_VERSION = 1
 
 
@@ -81,9 +85,35 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-url", default=DEFAULT_REPOSITORY_URL)
     parser.add_argument(
+        "--checkout-mode",
+        choices=("clone", "robustcheckout"),
+        default="clone",
+        help="Checkout workflow to measure (default: clone).",
+    )
+    parser.add_argument(
+        "--robustcheckout-repository-url",
+        default=PRODUCTION_ROBUSTCHECKOUT_REPOSITORY_URL,
+        help="Repository URL passed to hg robustcheckout.",
+    )
+    parser.add_argument(
+        "--robustcheckout-upstream-url",
+        default=PRODUCTION_ROBUSTCHECKOUT_UPSTREAM_URL,
+        help="Upstream URL passed to hg robustcheckout.",
+    )
+    parser.add_argument(
+        "--robustcheckout-sparse-profile",
+        default=PRODUCTION_ROBUSTCHECKOUT_SPARSE_PROFILE,
+        help="Sparse profile passed to hg robustcheckout.",
+    )
+    parser.add_argument(
+        "--robustcheckout-revision",
+        default=PRODUCTION_ROBUSTCHECKOUT_REVISION,
+        help="Revision passed to hg robustcheckout.",
+    )
+    parser.add_argument("--sharebase", help="Shared-store path passed to hg robustcheckout.")
+    parser.add_argument(
         "--destination",
-        default="mozilla-unified",
-        help="New clone destination (must not already exist).",
+        help="Checkout destination (defaults to mozilla-unified for clone or gecko for robustcheckout).",
     )
     parser.add_argument(
         "--output-dir",
@@ -92,7 +122,7 @@ def parse_args():
     )
     parser.add_argument("--configuration", choices=sorted(CONFIGURATIONS), default=DEFAULT_CONFIGURATION)
     parser.add_argument("--venv-dir", help="Override the configuration-specific virtualenv path.")
-    parser.add_argument("--skip-update", action="store_true", help="Only run 'hg clone --noupdate'.")
+    parser.add_argument("--skip-update", action="store_true", help="Skip the separate update phase in clone mode.")
     parser.add_argument("--skip-public-ip", action="store_true")
     parser.add_argument(
         "--telemetry-interval",
@@ -331,6 +361,30 @@ def verify_robustcheckout_configuration(hg_path, environment, hgrc_details):
 
     hgrc_details["effective_robustcheckout"] = actual or None
     return hgrc_details
+
+
+def robustcheckout_command(hg_path, args, destination, robustcheckout_path):
+    """Build the production-style robustcheckout invocation for telemetry runs."""
+    if not robustcheckout_path:
+        raise RuntimeError("robustcheckout mode requires a configuration that enables the robustcheckout extension")
+    sharebase = os.path.abspath(args.sharebase or os.path.join(os.path.dirname(destination), "hg-shared"))
+    return [
+        hg_path,
+        "robustcheckout",
+        "--sharebase",
+        sharebase,
+        "--purge",
+        "--config",
+        "extensions.robustcheckout={}".format(robustcheckout_path),
+        "--upstream",
+        args.robustcheckout_upstream_url,
+        "--sparseprofile",
+        args.robustcheckout_sparse_profile,
+        "--revision",
+        args.robustcheckout_revision,
+        args.robustcheckout_repository_url,
+        destination,
+    ]
 
 
 def cpu_model():
@@ -639,7 +693,11 @@ def main():
     if args.venv_dir is None:
         args.venv_dir = default_venv_dir(args.configuration, configuration)
     print("Configuration: {}".format(args.configuration), file=sys.stderr)
-    destination = os.path.abspath(args.destination)
+    default_destination = "gecko" if args.checkout_mode == "robustcheckout" else "mozilla-unified"
+    checkout_repository_url = (
+        args.robustcheckout_repository_url if args.checkout_mode == "robustcheckout" else args.repo_url
+    )
+    destination = os.path.abspath(args.destination or default_destination)
     output_dir = os.path.abspath(args.output_dir)
     destination_parent = os.path.dirname(destination)
     if os.path.exists(destination):
@@ -663,9 +721,13 @@ def main():
         },
         "benchmark_started_at": utc_now(),
         "mercurial_requested_version": configuration["mercurial_version"],
-        "repository_url": args.repo_url,
+        "repository_url": checkout_repository_url,
+        "checkout": {
+            "mode": args.checkout_mode,
+            "repository_url": checkout_repository_url,
+        },
         "destination": destination,
-        "metadata": host_metadata(destination_parent, args.repo_url),
+        "metadata": host_metadata(destination_parent, checkout_repository_url),
         "phases": {},
     }
 
@@ -710,22 +772,40 @@ def main():
             environment,
             hgrc_details,
         )
-
+        if args.checkout_mode == "robustcheckout":
+            results["checkout"].update(
+                {
+                    "upstream_url": args.robustcheckout_upstream_url,
+                    "sparse_profile": args.robustcheckout_sparse_profile,
+                    "revision": args.robustcheckout_revision,
+                    "sharebase": os.path.abspath(args.sharebase or os.path.join(destination_parent, "hg-shared")),
+                },
+            )
+            phase_name = "robustcheckout"
+            checkout_command = robustcheckout_command(
+                hg_path,
+                args,
+                destination,
+                hgrc_details["effective_robustcheckout"],
+            )
+        else:
+            phase_name = "clone"
+            checkout_command = [hg_path, "clone", "--noupdate", args.repo_url, destination]
         results["active_phase"] = {
-            "name": "clone",
-            "telemetry_artifact": "clone.telemetry.json" if args.telemetry_interval else None,
+            "name": phase_name,
+            "telemetry_artifact": phase_name + ".telemetry.json" if args.telemetry_interval else None,
         }
         clone = run_phase(
-            "clone",
-            [hg_path, "clone", "--noupdate", args.repo_url, destination],
+            phase_name,
+            checkout_command,
             output_dir,
             environment,
             args.telemetry_interval,
             destination_parent,
         )
-        results["phases"]["clone"] = clone
+        results["phases"][phase_name] = clone
         results.pop("active_phase", None)
-        if clone["exit_code"] == 0 and not args.skip_update:
+        if args.checkout_mode == "clone" and clone["exit_code"] == 0 and not args.skip_update:
             results["active_phase"] = {
                 "name": "update",
                 "telemetry_artifact": "update.telemetry.json" if args.telemetry_interval else None,

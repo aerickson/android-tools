@@ -18,6 +18,13 @@ the Mercurial process CPU and I/O counters, cgroup CPU statistics, and
 filesystem capacity. Set `--telemetry-interval 0` to disable sampling, or
 supply another interval in seconds.
 
+To reproduce the production-style `robustcheckout` path that timed out in
+Taskcluster task `dS1mEb9oS3yZKcJsukvhog`, use
+`--checkout-mode robustcheckout` with the
+`bitbar-docker-with-robustcheckout` configuration. Its defaults match that
+task's `try` URL, `mozilla-unified` upstream, perftest sparse profile, and
+revision; override any `--robustcheckout-*` option to test another job.
+
 ## Speedtest.net benchmark
 
 `speedtest_net_benchmark.sh` downloads Ookla's official CLI into a temporary

@@ -145,6 +145,7 @@ Mercurial internals.
 | 2026-08-08 02:20:21–02:32:05 | `aerickson-hg-clone-benchmark-20260807-standard2` | `bitbar-docker-with-robustcheckout` | 11m 43.308s | Successful complete clone and update; runner verified the pinned robustcheckout extension was enabled. |
 | 2026-08-10 19:59:51–20:09:25 | `aerickson-hg-clone-benchmark-20260807-standard2` | `latest-with-robustcheckout` | 9m 34.099s | Successful complete clone and update; runner verified the current canonical robustcheckout extension was enabled. |
 | 2026-08-19 02:24:46–02:48:15 | `bitbar-ubuntu-157` (A55) | `bitbar-docker-with-robustcheckout` | 23m 29.141s | Successful complete clone and update; continuous Mercurial progress and per-phase telemetry artifacts were captured. [Task](https://firefox-ci-tc.services.mozilla.com/tasks/k8Dj0KSFQyiIcfjPHIDciw) |
+| 2026-08-19 03:54:49–03:57:28 | `bitbar-ubuntu-157` (A55) | Production-style `hg robustcheckout` reproduction | 2m 39.317s | Successful; applied the 6.58-GB `mozilla-unified` stream-v2 bundle in 77.7s (86.7 MB/s). [Task](https://firefox-ci-tc.services.mozilla.com/tasks/27QWK5_4T9WzsKPkfNN-SA) |
 
 ### Bitbar A55 successful telemetry run
 
@@ -165,6 +166,21 @@ over 1,365.127 seconds (about 17.1 Mb/s averaged across the full phase). The
 cgroup reported 1,345.126 CPU seconds, close to one busy core for the phase,
 and zero throttling. This confirms the clone was neither stuck nor cgroup CPU
 limited, but it did not approach the host's nominal 10-Gb/s network capacity.
+
+### Bitbar A55 production-style `robustcheckout` reproduction
+
+Task [`27QWK5_4T9WzsKPkfNN-SA`](https://firefox-ci-tc.services.mozilla.com/tasks/27QWK5_4T9WzsKPkfNN-SA)
+used runner version `1.2.0` and replicated the timed-out job's checkout
+workflow: Mercurial `5.9.3`, `hg robustcheckout`, the `try` repository URL,
+`mozilla-unified` upstream, perftest sparse profile, revision
+`f069124083780d79af44fba3b71699b90a7a63d7`, a new sharebase, and `--purge`.
+It completed successfully on `bitbar-ubuntu-157` in 159.317s.
+
+The log reports the same 6.58-GB `mozilla-unified` stream-v2 bundle that the
+S24 production task stalled on, but this run transferred it in 77.7s at
+86.7 MB/s and finished applying it. This establishes that the robustcheckout
+workflow and this bundle can complete normally; the queued S24 reproduction
+will determine whether the stalled behavior is pool- or host-specific.
 
 ### `aerickson-hg-clone-benchmark-20260807-standard2`
 
@@ -394,6 +410,128 @@ selection cause.
   changesets and `t-linux64-ms-012` while adding files.
 
 ## Follow-up
+
+### 2026-08-19 S24/A55 robustcheckout confidence plan
+
+The S24 timeout task [`JAc7wgQDT5-3XPTyZA9N6w`](https://firefox-ci-tc.services.mozilla.com/tasks/JAc7wgQDT5-3XPTyZA9N6w)
+and the successful A55 reproduction
+[`27QWK5_4T9WzsKPkfNN-SA`](https://firefox-ci-tc.services.mozilla.com/tasks/27QWK5_4T9WzsKPkfNN-SA)
+have identical Taskcluster command payloads.  In particular, both use runner
+version `1.2.0`, Mercurial `5.9.3`, the same fixed robustcheckout extension,
+the `try`/`mozilla-unified` URLs, the same sparse profile and revision, a
+fresh sharebase, and a 5,400-second maximum runtime.  The follow-up runs must
+preserve that payload; do not change the checkout configuration while testing
+the worker/pool hypothesis.
+
+Each task writes its telemetry under `public/out`.  For every completed or
+timed-out task, record the task ID, `TASKCLUSTER_WORKER_GROUP`,
+`TASKCLUSTER_WORKER_ID`, hostname, task result, final network-byte sample,
+process and cgroup CPU samples, and free-space sample.  A timeout may only
+have the per-phase telemetry artifact, because the worker can be terminated
+before `results.json` is uploaded.
+
+#### Phase 1: three interleaved S24/A55 pairs
+
+The following commands submit each pair close together and poll both task
+states before moving to the next pair.  This supplies an A55 control near the
+same time as each S24 measurement without changing the workload.  They require
+`curl` and `jq`, both of which are used only to read public Taskcluster state:
+
+```bash
+RUNNER_ARGS='--checkout-mode robustcheckout --configuration bitbar-docker-with-robustcheckout --install-system-dependencies'
+
+submit_task() {
+    local output task_id
+    output="$("$@" 2>&1)"
+    printf '%s\n' "$output" >&2
+    task_id="$(printf '%s\n' "$output" | sed -nE 's#.*tasks/([A-Za-z0-9_-]{22}).*#\1#p' | tail -n 1)"
+    test -n "$task_id" || {
+        echo 'could not extract a Taskcluster task ID' >&2
+        return 1
+    }
+    printf '%s\n' "$task_id"
+}
+
+wait_for_task() {
+    local task_id="$1" state
+    while :; do
+        state="$(curl -fsSL "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/${task_id}/status" | jq -r '.status.state')"
+        case "$state" in
+            completed|failed|exception)
+                printf '%s: %s\n' "$task_id" "$state"
+                return 0
+                ;;
+        esac
+        printf '%s: %s; checking again in 30 seconds\n' "$task_id" "$state"
+        sleep 30
+    done
+}
+
+for attempt in 1 2 3; do
+    s24_task="$(submit_task ./ct-bitbar-gw-perf-s24.sh 1 \
+        -s ./ct_scripts/hg_clone_network_check.py \
+        --script-args="$RUNNER_ARGS" \
+        -t 5400)"
+    a55_task="$(submit_task ./ct-bitbar-gw-perf-a55.sh 1 \
+        -s ./ct_scripts/hg_clone_network_check.py \
+        --script-args="$RUNNER_ARGS" \
+        -t 5400)"
+    printf 'pair %s: S24=%s A55=%s\n' "$attempt" "$s24_task" "$a55_task"
+    wait_for_task "$s24_task"
+    wait_for_task "$a55_task"
+done
+```
+
+If only the S24 member of each pair is slow or times out, that rules out the
+checkout payload and substantially weakens an upstream-wide incident theory.
+
+#### Phase 2: sample multiple S24 workers
+
+First list the pool membership, then submit six identical S24 tasks.  The
+Taskcluster queue cannot assign a task to a named worker, so use the worker ID
+reported in each log to group the results.  If the batch did not exercise more
+than one worker, repeat this same six-task command after the first batch has
+settled.
+
+```bash
+./quarantine_tool.py proj-autophone gecko-t-bitbar-gw-perf-s24 show-all
+
+./ct-bitbar-gw-perf-s24.sh 6 \
+    -s ./ct_scripts/hg_clone_network_check.py \
+    --script-args='--checkout-mode robustcheckout --configuration bitbar-docker-with-robustcheckout --install-system-dependencies' \
+    -t 5400
+```
+
+Interpret the results by worker, not merely by pool: failures isolated to
+`bitbar/s24-02` indicate a host-level problem; consistent S24 failures with
+A55 controls passing indicate an S24-pool image, egress, proxy, or storage
+configuration difference; and failures distributed across both pools point
+back to shared upstream routing or service variability.
+
+#### Phase 3: confirm a suspected worker
+
+Only after Phase 2 identifies a candidate, temporarily quarantine every other
+S24 worker, submit three runs, and lift each quarantine immediately after the
+runs finish.  Substitute the actual worker IDs printed by the Phase 2 logs;
+do not quarantine the candidate (`s24-02` in this example).
+
+```bash
+./quarantine_tool.py proj-autophone gecko-t-bitbar-gw-perf-s24 quarantine <other-s24-worker-1>
+./quarantine_tool.py proj-autophone gecko-t-bitbar-gw-perf-s24 quarantine <other-s24-worker-2>
+
+./ct-bitbar-gw-perf-s24.sh 3 \
+    -s ./ct_scripts/hg_clone_network_check.py \
+    --script-args='--checkout-mode robustcheckout --configuration bitbar-docker-with-robustcheckout --install-system-dependencies' \
+    -t 5400
+
+./quarantine_tool.py proj-autophone gecko-t-bitbar-gw-perf-s24 lift <other-s24-worker-1>
+./quarantine_tool.py proj-autophone gecko-t-bitbar-gw-perf-s24 lift <other-s24-worker-2>
+```
+
+If the confirmed worker repeatedly shows low receive throughput and low CPU
+while the controls complete, quarantine it for remediation.  If it completes
+normally in this phase, retain the telemetry and treat the original timeout as
+an intermittent route or upstream event rather than changing the S24 image.
 
 - Use `./ct_scripts/hg_clone_network_check.py` for future runs. Treat its
   output as the standardized results format, and improve the script as new
