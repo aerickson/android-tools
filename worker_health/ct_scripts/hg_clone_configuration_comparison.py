@@ -38,6 +38,7 @@ def default_output_dir():
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner", help="Path to hg_clone_network_check.py (defaults to sibling, then ~/).")
+    # Match the hg-edge endpoint used by the observed CI clone task.
     parser.add_argument("--repo-url", default="https://hg-edge.mozilla.org/mozilla-unified")
     parser.add_argument("--output-dir", default=default_output_dir())
     parser.add_argument("--repetitions", type=int, default=3, help="Runs per configuration (default: 3).")

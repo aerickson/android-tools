@@ -57,6 +57,8 @@ DEFAULT_CONFIGURATION = "latest-without-robust-checkout"
 # measurements, or output. Formatting-only changes do not require a bump.
 # Bump minor or major when the result schema changes incompatibly.
 SCRIPT_VERSION = "1.1.4"
+# Match the hg-edge endpoint used by the observed CI clone task. Use
+# hg.mozilla.org only for explicit URL/redirect comparison experiments.
 DEFAULT_REPOSITORY_URL = "https://hg-edge.mozilla.org/mozilla-unified"
 RESULT_SCHEMA_VERSION = 1
 
