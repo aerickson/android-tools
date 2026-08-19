@@ -133,14 +133,15 @@ class TCClient:
         # format: "2025-08-22T18:18:05.351Z"
         datetime_string_format = "%Y-%m-%dT%H:%M:%S.000Z"
         current_time = time.strftime(datetime_string_format, time.gmtime())
-        three_hours_from_now = time.strftime(datetime_string_format, time.gmtime(time.time() + 3 * 60 * 60))
+        # Allow time for diagnostic tasks to wait in a busy worker queue.
+        deadline = time.strftime(datetime_string_format, time.gmtime(time.time() + 24 * 60 * 60))
         task_id = gen_task_id()
 
         create_task_args = {
             "taskQueueId": self.queue,
             # "schedulerId": "taskcluster-ui",
             "created": current_time,
-            "deadline": three_hours_from_now,
+            "deadline": deadline,
             "payload": build_payload(
                 self.payload_format,
                 self.bash_command,
