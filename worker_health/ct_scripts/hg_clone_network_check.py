@@ -18,6 +18,7 @@ import platform
 import re
 import resource
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -56,10 +57,11 @@ DEFAULT_CONFIGURATION = "latest-without-robust-checkout"
 # Increment the patch version when a change affects benchmark behavior,
 # measurements, or output. Formatting-only changes do not require a bump.
 # Bump minor or major when the result schema changes incompatibly.
-SCRIPT_VERSION = "1.1.4"
+SCRIPT_VERSION = "1.1.7"
 # Match the hg-edge endpoint used by the observed CI clone task. Use
 # hg.mozilla.org only for explicit URL/redirect comparison experiments.
 DEFAULT_REPOSITORY_URL = "https://hg-edge.mozilla.org/mozilla-unified"
+DEFAULT_TELEMETRY_INTERVAL_SECONDS = 15
 RESULT_SCHEMA_VERSION = 1
 
 
@@ -83,17 +85,34 @@ def parse_args():
         default="mozilla-unified",
         help="New clone destination (must not already exist).",
     )
-    parser.add_argument("--output-dir", default="hg-clone-network-check-" + timestamp)
+    parser.add_argument(
+        "--output-dir",
+        default=os.path.join("out", "hg-clone-network-check-" + timestamp),
+        help="Directory for benchmark logs and JSON artifacts (default: out/hg-clone-network-check-<timestamp>).",
+    )
     parser.add_argument("--configuration", choices=sorted(CONFIGURATIONS), default=DEFAULT_CONFIGURATION)
     parser.add_argument("--venv-dir", help="Override the configuration-specific virtualenv path.")
     parser.add_argument("--skip-update", action="store_true", help="Only run 'hg clone --noupdate'.")
     parser.add_argument("--skip-public-ip", action="store_true")
     parser.add_argument(
+        "--telemetry-interval",
+        type=float,
+        default=DEFAULT_TELEMETRY_INTERVAL_SECONDS,
+        metavar="SECONDS",
+        help=(
+            f"Seconds between clone resource samples (default: {DEFAULT_TELEMETRY_INTERVAL_SECONDS}). "
+            "Set to 0 to disable periodic telemetry."
+        ),
+    )
+    parser.add_argument(
         "--install-system-dependencies",
         action="store_true",
         help="Install missing interpreter support before provisioning (apt for system Python; uv for Bitbar Python).",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.telemetry_interval < 0:
+        parser.error("--telemetry-interval must be non-negative")
+    return args
 
 
 def run_checked(command, **kwargs):
@@ -285,6 +304,11 @@ rebase =
     }
 
 
+def hgrc_environment(hgrc_path):
+    """Return the child environment with a resolvable benchmark HGRCPATH."""
+    return dict(os.environ, HGRCPATH=os.path.abspath(hgrc_path))
+
+
 def verify_robustcheckout_configuration(hg_path, environment, hgrc_details):
     completed = subprocess.run(
         [hg_path, "showconfig", "extensions.robustcheckout"],
@@ -385,15 +409,158 @@ def copy_stream(source, destinations):
             destination.flush()
 
 
-def run_phase(name, command, output_dir, environment):
+def default_network_interface():
+    """Return the container's default-route interface, if it is visible."""
+    try:
+        with open("/proc/net/route") as routes:
+            next(routes)
+            for line in routes:
+                fields = line.split()
+                if len(fields) >= 4 and fields[1] == "00000000" and int(fields[3], 16) & 2:
+                    return fields[0]
+    except (OSError, StopIteration, ValueError):
+        pass
+    return None
+
+
+def network_counters(interface):
+    if interface is None:
+        return None
+    try:
+        with open("/proc/net/dev") as network_devices:
+            for line in network_devices:
+                name, separator, values = line.partition(":")
+                if separator and name.strip() == interface:
+                    fields = values.split()
+                    return {"interface": interface, "rx_bytes": int(fields[0]), "tx_bytes": int(fields[8])}
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def process_cpu_seconds(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as stat_file:
+            # The command name can contain spaces and parentheses, so split after its final ')'.
+            fields = stat_file.read().rsplit(")", 1)[1].split()
+        clock_ticks = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
+        return {"user_seconds": int(fields[11]) / clock_ticks, "system_seconds": int(fields[12]) / clock_ticks}
+    except (OSError, IndexError, KeyError, ValueError):
+        return None
+
+
+def process_io_bytes(pid):
+    try:
+        values = {}
+        with open(f"/proc/{pid}/io") as io_file:
+            for line in io_file:
+                key, separator, value = line.partition(":")
+                if separator:
+                    values[key] = int(value.strip())
+        return {key: values[key] for key in ("read_bytes", "write_bytes", "rchar", "wchar") if key in values}
+    except (OSError, ValueError):
+        return None
+
+
+def cgroup_cpu_stat():
+    candidates = ["/sys/fs/cgroup/cpu.stat", "/sys/fs/cgroup/cpu/cpu.stat"]
+    try:
+        with open("/proc/self/cgroup") as cgroups:
+            for line in cgroups:
+                _, controllers, path = line.strip().split(":", 2)
+                if not controllers or "cpu" in controllers.split(","):
+                    candidates.append("/sys/fs/cgroup{}{}cpu.stat".format(path, "" if path.endswith("/") else "/"))
+    except (OSError, ValueError):
+        pass
+
+    for candidate in candidates:
+        try:
+            values = {}
+            with open(candidate) as stat_file:
+                for line in stat_file:
+                    key, value = line.split(None, 1)
+                    values[key] = int(value)
+            return {"path": candidate, "values": values}
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+class PhaseTelemetry:
+    def __init__(self, pid, interval_seconds, monitored_path, started, artifact_path):
+        self.pid = pid
+        self.interval_seconds = interval_seconds
+        self.monitored_path = monitored_path
+        self.started = started
+        self.artifact_path = artifact_path
+        self.interface = default_network_interface()
+        self.samples = []
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def sample(self):
+        sample = {"timestamp": utc_now(), "elapsed_seconds": time.monotonic() - self.started}
+        network = network_counters(self.interface)
+        if network is not None:
+            sample["network"] = network
+        cpu = process_cpu_seconds(self.pid)
+        if cpu is not None:
+            sample["process_cpu_seconds"] = cpu
+        process_io = process_io_bytes(self.pid)
+        if process_io is not None:
+            sample["process_io_bytes"] = process_io
+        cgroup_cpu = cgroup_cpu_stat()
+        if cgroup_cpu is not None:
+            sample["cgroup_cpu"] = cgroup_cpu
+        try:
+            sample["storage"] = storage_info(self.monitored_path)
+        except OSError:
+            pass
+        self.samples.append(sample)
+        write_json_atomic(self.artifact_path, self.result())
+
+    def _run(self):
+        while not self.stop_event.wait(self.interval_seconds):
+            self.sample()
+
+    def start(self):
+        self.sample()
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        self.thread.join()
+        self.sample()
+
+    def result(self):
+        return {
+            "enabled": True,
+            "interval_seconds": self.interval_seconds,
+            "default_route_interface": self.interface,
+            "artifact": os.path.basename(self.artifact_path),
+            "samples": self.samples,
+        }
+
+
+def run_phase(name, command, output_dir, environment, telemetry_interval, monitored_path):
     stdout_path = os.path.join(output_dir, name + ".stdout.log")
     stderr_path = os.path.join(output_dir, name + ".stderr.log")
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started_at = utc_now()
     started = time.monotonic()
+    telemetry = None
     with open(stdout_path, "wb") as stdout_file, open(stderr_path, "wb") as stderr_file:
         print("+ {}".format(" ".join(command)), file=sys.stderr)
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+        if telemetry_interval:
+            telemetry = PhaseTelemetry(
+                process.pid,
+                telemetry_interval,
+                monitored_path,
+                started,
+                os.path.join(output_dir, name + ".telemetry.json"),
+            )
+            telemetry.start()
         stdout_thread = threading.Thread(target=copy_stream, args=(process.stdout, (stdout_file, sys.stdout.buffer)))
         stderr_thread = threading.Thread(target=copy_stream, args=(process.stderr, (stderr_file, sys.stderr.buffer)))
         stdout_thread.start()
@@ -401,8 +568,10 @@ def run_phase(name, command, output_dir, environment):
         return_code = process.wait()
         stdout_thread.join()
         stderr_thread.join()
+        if telemetry is not None:
+            telemetry.stop()
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
-    return {
+    result = {
         "command": command,
         "started_at": started_at,
         "finished_at": utc_now(),
@@ -415,6 +584,11 @@ def run_phase(name, command, output_dir, environment):
         "stdout_log": os.path.basename(stdout_path),
         "stderr_log": os.path.basename(stderr_path),
     }
+    if telemetry is None:
+        result["telemetry"] = {"enabled": False}
+    else:
+        result["telemetry"] = telemetry.result()
+    return result
 
 
 def directory_size_bytes(path):
@@ -432,6 +606,15 @@ def write_json(path, value):
     with open(path, "w") as output:
         json.dump(value, output, indent=2, sort_keys=True)
         output.write("\n")
+
+
+def write_json_atomic(path, value):
+    directory = os.path.dirname(path)
+    with tempfile.NamedTemporaryFile("w", dir=directory, prefix=".telemetry-", delete=False) as output:
+        json.dump(value, output, indent=2, sort_keys=True)
+        output.write("\n")
+        temporary_path = output.name
+    os.replace(temporary_path, path)
 
 
 def write_summary(path, results):
@@ -476,6 +659,7 @@ def main():
             "mercurial_version": configuration["mercurial_version"],
             "python_command": configuration["python_command"],
             "python_manager": configuration["python_manager"],
+            "telemetry_interval_seconds": args.telemetry_interval,
         },
         "benchmark_started_at": utc_now(),
         "mercurial_requested_version": configuration["mercurial_version"],
@@ -484,6 +668,20 @@ def main():
         "metadata": host_metadata(destination_parent, args.repo_url),
         "phases": {},
     }
+
+    def persist_partial_results(signum=None):
+        if signum is not None:
+            results["interrupted"] = {"signal": signal.Signals(signum).name, "timestamp": utc_now()}
+        results["benchmark_finished_at"] = utc_now()
+        write_json_atomic(os.path.join(output_dir, "results.json"), results)
+
+    def handle_termination(signum, _frame):
+        persist_partial_results(signum)
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, handle_termination)
+    signal.signal(signal.SIGINT, handle_termination)
+
     if not args.skip_public_ip:
         results["metadata"]["public_ip"] = public_ip()
 
@@ -506,27 +704,41 @@ def main():
         results["venv_provisioned_this_run"] = provisioned
         hgrc_details = write_hgrc(output_dir, configuration)
         hgrc_path = os.path.join(output_dir, hgrc_details["HGRCPATH"])
-        environment = dict(os.environ, HGRCPATH=hgrc_path)
+        environment = hgrc_environment(hgrc_path)
         results["mercurial_configuration"] = verify_robustcheckout_configuration(
             hg_path,
             environment,
             hgrc_details,
         )
 
+        results["active_phase"] = {
+            "name": "clone",
+            "telemetry_artifact": "clone.telemetry.json" if args.telemetry_interval else None,
+        }
         clone = run_phase(
             "clone",
             [hg_path, "clone", "--noupdate", args.repo_url, destination],
             output_dir,
             environment,
+            args.telemetry_interval,
+            destination_parent,
         )
         results["phases"]["clone"] = clone
+        results.pop("active_phase", None)
         if clone["exit_code"] == 0 and not args.skip_update:
+            results["active_phase"] = {
+                "name": "update",
+                "telemetry_artifact": "update.telemetry.json" if args.telemetry_interval else None,
+            }
             results["phases"]["update"] = run_phase(
                 "update",
                 [hg_path, "--repository", destination, "update"],
                 output_dir,
                 environment,
+                args.telemetry_interval,
+                destination_parent,
             )
+            results.pop("active_phase", None)
         if os.path.exists(destination):
             results["destination_size_bytes"] = directory_size_bytes(destination)
     except Exception as exc:
@@ -534,8 +746,7 @@ def main():
         write_json(os.path.join(output_dir, "results.json"), results)
         raise
     finally:
-        results["benchmark_finished_at"] = utc_now()
-        write_json(os.path.join(output_dir, "results.json"), results)
+        persist_partial_results()
         write_summary(os.path.join(output_dir, "summary.txt"), results)
 
     print("Results written to {}".format(os.path.join(output_dir, "results.json")))

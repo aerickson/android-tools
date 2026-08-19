@@ -18,7 +18,7 @@ import sys
 
 # Increment the patch version when a change affects comparison behavior or
 # output. Formatting-only changes do not require a bump.
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.0.1"
 DEFAULT_CONFIGURATIONS = (
     "latest-without-robust-checkout",
     "bitbar-docker-with-robustcheckout",
@@ -30,8 +30,12 @@ def utc_now():
 
 
 def default_output_dir():
-    return "hg-clone-configuration-comparison-" + datetime.datetime.now(datetime.timezone.utc).strftime(
-        "%Y%m%dT%H%M%SZ",
+    return str(
+        Path("out")
+        / (
+            "hg-clone-configuration-comparison-"
+            + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        ),
     )
 
 
