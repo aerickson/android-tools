@@ -74,9 +74,9 @@ baseline run is no longer needed.
 
 ## Measurements
 
-All runs cloned `https://hg-edge.mozilla.org/mozilla-unified`. The Taskcluster
-runs were stopped by their 40-minute maximum runtime, so their durations are
-lower bounds rather than successful clone timings.
+All runs cloned `https://hg-edge.mozilla.org/mozilla-unified`. The earlier
+Taskcluster runs were stopped by their 40-minute maximum runtime, so their
+durations are lower bounds rather than successful clone timings.
 
 ## Bitbar Mercurial tooling
 
@@ -144,6 +144,27 @@ Mercurial internals.
 | 2026-08-08 01:57:11–02:06:12 | `aerickson-hg-clone-benchmark-20260807-standard2` | `latest-without-robust-checkout` | 9m 00.622s | Successful complete clone and update; runner verified `robustcheckout` was disabled. |
 | 2026-08-08 02:20:21–02:32:05 | `aerickson-hg-clone-benchmark-20260807-standard2` | `bitbar-docker-with-robustcheckout` | 11m 43.308s | Successful complete clone and update; runner verified the pinned robustcheckout extension was enabled. |
 | 2026-08-10 19:59:51–20:09:25 | `aerickson-hg-clone-benchmark-20260807-standard2` | `latest-with-robustcheckout` | 9m 34.099s | Successful complete clone and update; runner verified the current canonical robustcheckout extension was enabled. |
+| 2026-08-19 02:24:46–02:48:15 | `bitbar-ubuntu-157` (A55) | `bitbar-docker-with-robustcheckout` | 23m 29.141s | Successful complete clone and update; continuous Mercurial progress and per-phase telemetry artifacts were captured. [Task](https://firefox-ci-tc.services.mozilla.com/tasks/k8Dj0KSFQyiIcfjPHIDciw) |
+
+### Bitbar A55 successful telemetry run
+
+Task [`k8Dj0KSFQyiIcfjPHIDciw`](https://firefox-ci-tc.services.mozilla.com/tasks/k8Dj0KSFQyiIcfjPHIDciw)
+completed on `bitbar-ubuntu-157` using script version `1.1.7`, Mercurial
+`5.9.3`, Python `3.9.21`, and the `bitbar-docker-with-robustcheckout`
+configuration. Its generated `HGRCPATH` loaded correctly, producing live
+Mercurial progress output throughout clone and update.
+
+| Phase | Elapsed | Child user CPU | Child system CPU | Exit |
+| --- | ---: | ---: | ---: | ---: |
+| `hg clone --noupdate` | 22m 45.134s | 1237.776s | 101.091s | 0 |
+| `hg update` | 44.007s | 249.365s | 125.975s | 0 |
+| Total Mercurial phases | 23m 29.141s | 1487.141s | 227.066s | 0 |
+
+Clone telemetry recorded 2,912,319,491 received bytes on container `eth0`
+over 1,365.127 seconds (about 17.1 Mb/s averaged across the full phase). The
+cgroup reported 1,345.126 CPU seconds, close to one busy core for the phase,
+and zero throttling. This confirms the clone was neither stuck nor cgroup CPU
+limited, but it did not approach the host's nominal 10-Gb/s network capacity.
 
 ### `aerickson-hg-clone-benchmark-20260807-standard2`
 
@@ -249,6 +270,27 @@ This single result is 32.946s (6.1%) slower than the three-run
 three-run total range (8m 49.819s–9m 04.286s), but needs interleaved repeats
 before treating the size of this effect as established.
 
+### Repeated latest-Hg robustcheckout comparison
+
+On 2026-08-10, a second comparison-runner experiment interleaved three
+successful `latest-without-robust-checkout` control runs with three successful
+`latest-with-robustcheckout` runs. All runs used runner version `1.1.4`,
+Mercurial `7.0.2`, and Python `3.12.3`; each clone destination was removed
+before the next run. The controls verified that robustcheckout was disabled,
+and the test runs verified the pinned canonical extension was enabled.
+
+| Configuration | Clone median (range) | Update median (range) | Total median (range) |
+| --- | ---: | ---: | ---: |
+| `latest-without-robust-checkout` | 3m 11.634s (3m 08.713s–3m 19.146s) | 5m 42.968s (5m 40.023s–5m 50.150s) | 8m 51.680s (8m 51.657s–9m 09.295s) |
+| `latest-with-robustcheckout` | 3m 19.669s (3m 18.427s–3m 29.373s) | 5m 49.311s (5m 47.196s–5m 50.664s) | 9m 08.979s (9m 05.623s–9m 20.037s) |
+
+The canonical robustcheckout configuration's median was 17.299s (3.3%)
+slower. It was slower in all three matched control/test pairs: 10.742s
+(2.0%), 17.322s (3.3%), and 13.943s (2.6%). The median difference comprises
+8.034s in clone (4.2%) and 6.343s in update (1.9%). This controlled result is
+the appropriate estimate of the extension/configuration effect; the earlier
+one-off 6.1% result was higher than this interleaved estimate.
+
 ### `aerickson-hg-benchmarking`
 
 The clone downloaded and applied the bundle before it was killed during the
@@ -338,8 +380,9 @@ selection cause.
   Bitbar-component median was 12m 03.972s versus 9m 01.153s for
   latest/no-robustcheckout, a 33.8% increase.
 - A single latest-Hg run with the current canonical robustcheckout extension
-  completed in 9m 34.099s (6.1% above the no-robustcheckout median); repeat it
-  interleaved with the baseline before drawing a quantitative conclusion.
+  completed in 9m 34.099s (6.1% above the earlier no-robustcheckout median).
+- Three interleaved latest-Hg control/test pairs measured a smaller, consistent
+  robustcheckout/configuration overhead: 17.299s (3.3%) at the median.
 - The earlier `e2.micro` bare `hg clone` did not complete either: its captured
   output ends in `Killed` during `updating to branch default`. The new runner's
   small Python wrapper and log capture are not a plausible explanation for the
