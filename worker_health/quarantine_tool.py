@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
-import re
 import pprint
-import pendulum
+import re
 
-from worker_health import quarantine
-from worker_health import tc
+import pendulum
 from worker_health.utils import date_in_past, human_delta
+
+from worker_health import quarantine, tc
 
 
 def natural_sort_key(s, _nsre=re.compile("([0-9]+)")):
@@ -118,6 +118,7 @@ if __name__ == "__main__":
         results = q.get_quarantined_workers_structured(
             provisioner=args.provisioner,
             worker_type=args.worker_type,
+            skip_details=args.verbose == 0,
         )
         if not results:
             print("no results")
@@ -126,7 +127,7 @@ if __name__ == "__main__":
             quarantined_workers = results["quarantined_workers"]
             formatted_workers = sorted(
                 quarantined_workers,
-                key=lambda d: "{0:0>8}".format(d.replace("macmini-r8-", "")),
+                key=lambda d: "{:0>8}".format(d.replace("macmini-r8-", "")),
             )
             if args.verbose == 3:
                 print(",".join(formatted_workers))
@@ -177,11 +178,11 @@ if __name__ == "__main__":
         #   - split on '-' and others and use last part?
         sorted_list_of_dicts = sorted(
             results["workers"],
-            key=lambda d: "{0:0>8}".format(d["workerId"].replace("macmini-r8-", "")),
+            key=lambda d: "{:0>8}".format(d["workerId"].replace("macmini-r8-", "")),
         )
 
         for item in sorted_list_of_dicts:
-            output += "%s," % item["workerId"]
+            output += f"{item['workerId']},"
         # trim last comma off
         print(output[0:-1])
 

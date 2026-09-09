@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import json
 import os
 import pprint
@@ -7,14 +5,18 @@ import pprint
 import taskcluster
 
 from worker_health import fitness
-from worker_health import quarantine_graphql
 
 # see https://github.com/mozilla-platform-ops/relops-infra/blob/master/quarantine_tc.py
 # for prior art
 
 
+class QuarantineError(RuntimeError):
+    pass
+
+
 class Quarantine:
     tc_queue = None
+    tc_worker_manager = None
     root_url = "https://firefox-ci-tc.services.mozilla.com"
 
     def __init__(self):
@@ -23,6 +25,9 @@ class Quarantine:
         creds = {"clientId": data["clientId"], "accessToken": data["accessToken"]}
 
         self.tc_queue = taskcluster.Queue(
+            {"rootUrl": self.root_url, "credentials": creds},
+        )
+        self.tc_worker_manager = taskcluster.WorkerManager(
             {"rootUrl": self.root_url, "credentials": creds},
         )
 
@@ -43,36 +48,30 @@ class Quarantine:
             worker_type=worker_type,
         )
         if len(wgs) > 1:
-            raise Exception(
+            raise QuarantineError(
                 "can't guess workerGroup, multiple present. support not implemented yet.",
             )
         if len(wgs) == 0:
-            raise Exception(f"couldn't find a matching workerType ('{worker_type}')!")
+            raise QuarantineError(f"couldn't find a matching workerType ('{worker_type}')!")
         worker_group = wgs[0]
 
         for a_host in host_arr:
             if "-" in duration:
                 if verbose:
-                    print("lifting quarantine on %s... " % a_host)
+                    print(f"lifting quarantine on {a_host}... ")
             else:
                 if verbose:
-                    print("adding %s to quarantine... " % a_host)
-            try:
-                # TODO: use self.quarantine?
-                self.tc_queue.quarantineWorker(
-                    provisioner_id,
-                    worker_type,
-                    worker_group,
-                    a_host,
-                    {
-                        "quarantineUntil": taskcluster.fromNow(duration),
-                        "quarantineInfo": reason,
-                    },
-                )
-            except taskcluster.exceptions.TaskclusterRestFailure as e:
-                # usually due to worker not being in pool...
-                # TODO: inspect message
-                raise e
+                    print(f"adding {a_host} to quarantine... ")
+            self.tc_queue.quarantineWorker(
+                provisioner_id,
+                worker_type,
+                worker_group,
+                a_host,
+                {
+                    "quarantineUntil": taskcluster.fromNow(duration),
+                    "quarantineInfo": reason,
+                },
+            )
 
     def lift_quarantine(
         self,
@@ -109,31 +108,16 @@ class Quarantine:
         return output
 
     def get_quarantined_workers(self, provisioner, worker_type):
-        # import ipdb
-        # ipdb.set_trace()
-
-        i = 0
-        outcome = self.tc_queue.listWorkers(
+        workers = []
+        self.tc_queue.listWorkers(
             provisioner,
             worker_type,
             query={"quarantined": "true"},
+            paginationHandler=lambda outcome: workers.extend(outcome.get("workers", [])),
         )
-        while outcome.get("continuationToken"):
-            # print('more...')
-            if outcome.get("continuationToken"):
-                outcome = self.tc_queue.listWorkers(
-                    provisioner,
-                    worker_type,
-                    query={
-                        "quarantined": "true",
-                        "continuationToken": outcome.get("continuationToken"),
-                    },
-                )
-            i += 1
-            # tasks += len(outcome.get('tasks', []))
 
         quarantined_workers = {}
-        for item in outcome["workers"]:
+        for item in workers:
             hostname = item["workerId"]
             quarantined_workers[hostname] = item.get("quarantineUntil")
         return quarantined_workers
@@ -143,42 +127,25 @@ class Quarantine:
     # TODO: replace all usages of get_quarantined_workers() with this
     def get_quarantined_workers_structured(self, provisioner, worker_type, skip_details=False):
         result_dict = {}
-
-        # import ipdb
-        # ipdb.set_trace()
-
-        i = 0
-        outcome = self.tc_queue.listWorkers(
+        workers = []
+        self.tc_queue.listWorkers(
             provisioner,
             worker_type,
             query={"quarantined": "true"},
+            paginationHandler=lambda outcome: workers.extend(outcome.get("workers", [])),
         )
-        while outcome.get("continuationToken"):
-            # print('more...')
-            if outcome.get("continuationToken"):
-                outcome = self.tc_queue.listWorkers(
-                    provisioner,
-                    worker_type,
-                    query={
-                        "quarantined": "true",
-                        "continuationToken": outcome.get("continuationToken"),
-                    },
-                )
-            i += 1
-            # tasks += len(outcome.get('tasks', []))
 
         quarantined_workers = []
-        for item in outcome["workers"]:
+        for item in workers:
             hostname = item["workerId"]
-            workerPoolId = f"{provisioner}/{worker_type}"
             if not skip_details:
-                quarantine_info = quarantine_graphql.view_quarantined_worker_details(
-                    provisionerId=provisioner,
-                    workerType=worker_type,
-                    workerGroup=item["workerGroup"],
-                    workerId=hostname,
-                    workerPoolId=workerPoolId,
+                worker = self.tc_worker_manager.getWorker(
+                    provisioner,
+                    worker_type,
+                    item["workerGroup"],
+                    hostname,
                 )
+                quarantine_info = worker.get("quarantineDetails", [])
             else:
                 quarantine_info = []
 
@@ -196,7 +163,7 @@ class Quarantine:
     def print_quarantined_workers(self, provisioner, worker_type):
         output = self.get_quarantined_workers(provisioner, worker_type)
         count = len(output)
-        print("quarantined workers (%s): %s" % (count, list(output.keys())))
+        print(f"quarantined workers ({count}): {list(output.keys())}")
 
 
 if __name__ == "__main__":
@@ -206,11 +173,11 @@ if __name__ == "__main__":
     wt = "gecko-t-bitbar-gw-perf-a55"
     results = q.get_quarantined_workers_structured(provisioner=prov, worker_type=wt)
     devices = results["quarantined_workers"]
-    print("quarantined workers (%s): %s" % (len(devices), devices))
+    print(f"quarantined workers ({len(devices)}): {devices}")
 
-    print("")
+    print()
 
     # print("quarantined workers (%s): %s" % (len(devices), pprint.pformat(devices)))
     print(
-        "quarantined workers with details (%s): %s" % (len(results), pprint.pformat(results)),
+        f"quarantined workers with details ({len(results)}): {pprint.pformat(results)}",
     )
