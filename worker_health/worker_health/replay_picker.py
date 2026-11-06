@@ -1,13 +1,15 @@
 """Discover recent replay workloads and select them in a terminal."""
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import curses
-from dataclasses import dataclass
-from datetime import datetime
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from datetime import datetime
 
 import taskcluster
+
+logger = logging.getLogger(__name__)
 
 
 LEVEL_PATTERN = re.compile(r"level-(\d+)(?=[/\-]|$)")
@@ -78,6 +80,7 @@ class Discovery:
     eligible_tasks: int
     unavailable_workers: int
     cached_at: float | None = None
+    complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -128,7 +131,7 @@ def pool_task_ids(manager, pool, progress=lambda message: None):
                     "worker no longer available" if code == 404 else (str(exc).partition("\n")[0] or type(exc).__name__)
                 )
                 http = f" (HTTP {code})" if code else ""
-                logging.warning("Skipping history for %s/%s: %s%s", *futures[future], reason, http)
+                logger.warning("Skipping history for %s/%s: %s%s", *futures[future], reason, http)
             progress(f"Reading worker history: {index}/{len(workers)} workers; {len(ids)} unique task IDs")
     return ids, len(workers), unavailable
 
@@ -138,15 +141,15 @@ def discover_jobs(queue, manager, pool, progress=lambda message: None):
     ids, workers, unavailable = pool_task_ids(manager, pool, progress)
 
     progress(f"Checking status of {len(ids)} observed tasks")
-    statuses = {
-        entry["taskId"]: entry["status"]
-        for entry in batch_results(queue.statuses, sorted(ids), "statuses")
-        if entry["status"]["state"] == "completed"
+    observed_statuses = {
+        entry["taskId"]: entry["status"] for entry in batch_results(queue.statuses, sorted(ids), "statuses")
     }
+    statuses = {task_id: status for task_id, status in observed_statuses.items() if status["state"] == "completed"}
     progress(f"Reading {len(statuses)} completed task definitions")
     grouped = {}
     eligible = 0
-    for entry in batch_results(queue.tasks, sorted(statuses), "tasks"):
+    definitions = list(batch_results(queue.tasks, sorted(statuses), "tasks"))
+    for entry in definitions:
         task = entry["task"]
         task_pool = task.get("taskQueueId") or f"{task.get('provisionerId')}/{task.get('workerType')}"
         if task_pool != pool or level_one_problem(task):
@@ -181,6 +184,9 @@ def discover_jobs(queue, manager, pool, progress=lambda message: None):
         len(ids),
         eligible,
         unavailable,
+        complete=not unavailable
+        and set(observed_statuses) == ids
+        and {entry["taskId"] for entry in definitions} == set(statuses),
     )
 
 

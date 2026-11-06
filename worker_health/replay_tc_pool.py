@@ -19,6 +19,7 @@ from worker_health.replay_controller import (
     state_path,
 )
 from worker_health.replay_dashboard import LogBuffer, run_dashboard
+from worker_health.replay_report import ReplayReport
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,19 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true", help="Check permissions and inputs without submitting tasks")
     parser.add_argument("--once", action="store_true", help="Run one scheduling cycle and exit")
     parser.add_argument("--output", choices=("table", "log"), default="table")
+    parser.add_argument(
+        "--stop-on-full-coverage",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Pause submissions while covered; resume for new uncovered types (default: on)",
+    )
+    parser.add_argument(
+        "--exit-on-full-coverage",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Write the report and exit when full coverage is confirmed (default: off)",
+    )
+    parser.add_argument("--report", help="JSON report path (default: unique file under /tmp)")
     args = parser.parse_args()
     if args.from_pool == args.queue:
         parser.error("Source and destination pools must differ")
@@ -97,7 +111,15 @@ def parse_args():
 
 def run_controller(args, console, stop=None, publish=None):
     stop = stop or threading.Event()
+    wake = getattr(args, "replay_wake", None)
+    report = None
+    data = {"full_coverage": False}
+    reason = "manual_stop"
+    result = 0
     try:
+        report = ReplayReport(args)
+        args.replay_report = report
+        logger.info("Coverage report: %s", report.path)
         queue = queue_client(authenticated=True)
         with ControllerState(state_path(args.queue)) as state:
             controller = ReplayController(
@@ -116,39 +138,71 @@ def run_controller(args, console, stop=None, publish=None):
                     publish(controller.snapshot())
 
                 controller.progress = progress
-            while not stop.is_set():
-                failed = False
-                try:
-                    controller.tick()
-                except SchedulingStopped:
-                    break
-                except (taskcluster.exceptions.TaskclusterFailure, ValueError, KeyError) as exc:
-                    controller.message = f"Cycle paused: {exc}"
-                    logger.warning("%s", controller.message)
-                    failed = True
-                finally:
-                    controller.refresh_view()
-                if publish:
-                    publish(controller.snapshot())
-                elif args.output == "table":
-                    console.print(controller.render())
-                logger.info(
-                    "Workers=%s outstanding=%s/%s | %s",
-                    controller.workers,
-                    controller.outstanding,
-                    controller.limit,
-                    controller.message,
-                )
-                if args.once:
-                    return int(failed)
-                stop.wait(args.poll_interval)
-        return 0
+            try:
+                while not stop.is_set():
+                    if wake:
+                        wake.clear()
+                    failed = False
+                    try:
+                        controller.tick()
+                    except SchedulingStopped:
+                        break
+                    except (taskcluster.exceptions.TaskclusterFailure, ValueError, KeyError) as exc:
+                        controller.coverage_confirmed = False
+                        controller.exit_ready = controller.paused = False
+                        controller.message = f"Cycle paused: {exc}"
+                        logger.warning("%s", controller.message)
+                        failed = True
+                    finally:
+                        controller.refresh_view()
+                    data = controller.report()
+                    report.write(data)
+                    if publish:
+                        publish(controller.snapshot())
+                    elif args.output == "table":
+                        console.print(controller.render())
+                    logger.info(
+                        "Workers=%s outstanding=%s/%s | Coverage=%s/%s (%s excluded) | %s",
+                        controller.workers,
+                        controller.outstanding,
+                        controller.limit,
+                        data["passed"],
+                        data["eligible"],
+                        data["excluded"],
+                        controller.message,
+                    )
+                    if not failed and controller.exit_ready:
+                        reason = "full_coverage"
+                        break
+                    if args.once:
+                        reason = "cycle_failed" if failed else "once"
+                        result = int(failed)
+                        break
+                    (wake or stop).wait(args.poll_interval)
+            finally:
+                controller.refresh_view()
+                data = controller.report()
     except KeyboardInterrupt:
         logger.info("Stopped scheduling; submitted tasks keep running. Restart to resume tracking.")
-        return 0
     except (OSError, sqlite3.Error, ValueError, taskcluster.exceptions.TaskclusterFailure) as exc:
+        reason = "error"
+        data["error"] = str(exc)
         logger.error("Controller stopped: %s", exc)
-        return 1
+        result = 1
+    finally:
+        if report:
+            try:
+                report.write(data, exit_reason=reason)
+                logger.info("Coverage report: %s (%s)", report.path, reason)
+                args.replay_exit_summary = (
+                    f"★ Full coverage: {data['passed']}/{data['eligible']} eligible types. "
+                    if reason == "full_coverage"
+                    else "Stopped scheduling; submitted tasks keep running. "
+                ) + f"Report: {report.path}"
+            except OSError as exc:
+                logger.error("Could not write coverage report %s: %s", report.path, exc)
+                result = 1
+    return result
 
 
 def main():
@@ -176,7 +230,7 @@ def main():
         for _, _, line in logs.snapshot()[-5:]:
             console.print(Text(line))
     else:
-        logger.info("Stopped scheduling; submitted tasks keep running. Restart to resume tracking.")
+        logger.info("%s", getattr(args, "replay_exit_summary", "Stopped scheduling; submitted tasks keep running."))
     return result
 
 

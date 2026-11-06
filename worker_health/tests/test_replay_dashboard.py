@@ -1,9 +1,11 @@
 import curses
+import json
 import logging
 import threading
 from types import SimpleNamespace
 
 from worker_health.replay_dashboard import Dashboard, LogBuffer, PaneCursor, run_dashboard
+from worker_health.replay_report import ReplayReport
 
 
 def test_task_cursor_follows_identity_when_rows_change():
@@ -139,3 +141,54 @@ def test_quit_stays_responsive_while_worker_is_busy(mocker):
     assert run_dashboard(SimpleNamespace(), LogBuffer(), worker) == 0
     assert finished.is_set()
     assert thread_ids != [threading.get_ident()]
+
+
+def test_coverage_keys_toggle_independently_and_wake_scheduler(mocker):
+    args = SimpleNamespace(
+        from_pool="source/pool",
+        queue="target/pool",
+        stop_on_full_coverage=True,
+        exit_on_full_coverage=False,
+        replay_wake=threading.Event(),
+    )
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 120)
+    screen.getch.side_effect = [ord("f"), ord("e"), ord("q")]
+    view.screen(screen)
+    assert not args.stop_on_full_coverage
+    assert args.exit_on_full_coverage
+    assert args.replay_wake.is_set()
+
+
+def test_quit_finalizes_report_while_api_is_busy(mocker, tmp_path):
+    args = SimpleNamespace(from_pool="source/pool", queue="target/pool", report=str(tmp_path / "report.json"))
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def worker(stop, publish):
+        args.replay_report = ReplayReport(args)
+        args.replay_report.write({"full_coverage": False, "passed": 1})
+        entered.set()
+        try:
+            assert release.wait(5)
+            args.replay_report.write({"full_coverage": True, "passed": 2})
+            return 0
+        finally:
+            finished.set()
+
+    def screen(view):
+        assert entered.wait(2)
+        view.stop.set()
+
+    mocker.patch.object(Dashboard, "run", autospec=True, side_effect=screen)
+    try:
+        assert run_dashboard(args, LogBuffer(), worker) == 0
+        report = json.loads((tmp_path / "report.json").read_text())
+        assert report["exit_reason"] == "manual_stop"
+        assert report["passed"] == 1
+    finally:
+        release.set()
+        assert finished.wait(2)
+    assert json.loads((tmp_path / "report.json").read_text()) == report

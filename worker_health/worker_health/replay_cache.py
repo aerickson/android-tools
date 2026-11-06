@@ -1,15 +1,17 @@
 """Short-lived local cache of discovered replay workloads; credentials are never cached."""
 
-from dataclasses import asdict
 import hashlib
 import json
 import logging
 import os
-from pathlib import Path
 import tempfile
 import time
+from dataclasses import asdict
+from pathlib import Path
 
 from worker_health.replay_picker import Discovery, ReplayJob
+
+logger = logging.getLogger(__name__)
 
 
 def cache_path(pool):
@@ -26,13 +28,15 @@ def load_discovery(pool, minutes):
         if cached["version"] != 1 or cached["pool"] != pool or not 0 <= age < minutes * 60:
             return None
         data = cached["discovery"]
+        # Older caches did not record whether batch API responses were partial.
+        data.setdefault("complete", False)
         jobs = [ReplayJob(**entry) for entry in data.pop("jobs")]
         data["cached_at"] = cached["saved_at"]
         return Discovery(jobs=jobs, **data)
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        logging.warning("Ignoring unavailable or invalid picker cache: %s", exc)
+        logger.warning("Ignoring unavailable or invalid picker cache: %s", exc)
         return None
 
 
@@ -46,7 +50,7 @@ def save_discovery(pool, discovery):
             json.dump({"version": 1, "pool": pool, "saved_at": time.time(), "discovery": asdict(discovery)}, output)
         temporary.replace(path)
     except OSError as exc:
-        logging.warning("Could not save picker history cache: %s", exc)
+        logger.warning("Could not save picker history cache: %s", exc)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

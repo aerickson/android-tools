@@ -179,6 +179,28 @@ class ReplayController:
         self.active_tasks = {}
         self.observed_statuses = {}
         self.stop_requested = stop_requested or (lambda: False)
+        self.discovery = None
+        self.coverage_confirmed = False
+        self.full_coverage = False
+        self.paused = False
+        self.exit_ready = False
+        self.initial_task_ids = {row[0] for row in self.state.db.execute("SELECT task_id FROM tasks")}
+
+    def coverage_state(self):
+        passed, eligible, _ = self.display_rows()
+        full = bool(self.coverage_confirmed and eligible and passed == eligible)
+        return passed, eligible, full
+
+    def update_coverage(self):
+        passed, eligible, full = self.coverage_state()
+        if full and not self.full_coverage:
+            logger.info("★ Full coverage: %s/%s eligible types", passed, eligible)
+        elif self.full_coverage and not full:
+            logger.info("Coverage changed: %s/%s eligible types; checking uncovered workloads", passed, eligible)
+        self.full_coverage = full
+        self.exit_ready = full and getattr(self.args, "exit_on_full_coverage", False)
+        self.paused = full and getattr(self.args, "stop_on_full_coverage", True)
+        return self.paused or self.exit_ready
 
     def refresh_view(self):
         # Rich refreshes in another thread; render only snapshots, never SQLite queries.
@@ -250,6 +272,8 @@ class ReplayController:
         logger.info("%s", self.message)
 
     def tick(self, now=None):
+        self.coverage_confirmed = False
+        self.exit_ready = self.paused = False
         if self.stop_requested():
             return
         now = now or self.clock()
@@ -268,8 +292,21 @@ class ReplayController:
             for job in discovery.jobs:
                 self.state.ensure_job(workload_key(self.args.from_pool, job), job.name)
             self.jobs = discovery.jobs
+            self.discovery = discovery
             self.last_discovery = now
         self.refresh_view()
+        self.coverage_confirmed = (
+            self.discovery is not None and self.discovery.complete and not self.discovery.unavailable_workers
+        )
+        if self.update_coverage():
+            self.message = (
+                "Full coverage reached; exiting"
+                if self.exit_ready
+                else "Paused while covered; monitoring for new workload types"
+            )
+            self.progress(self.message)
+            self.capacity(now)
+            return
         self.progress("Reading destination activity and queue counts")
         self.capacity(now)
         if not self.state.rate_ready(now.timestamp(), self.args.submit_interval):
@@ -320,6 +357,7 @@ class ReplayController:
             history = self.state.history(key)
             if (
                 key not in active_types
+                and not (getattr(self.args, "stop_on_full_coverage", True) and history["successes"])
                 and history["retry_after"] <= now.timestamp()
                 and not missing_scopes(job.task, self.args.queue, self.granted)
             ):
@@ -443,6 +481,13 @@ class ReplayController:
             "limit": self.limit,
             "passed": passed,
             "eligible": eligible,
+            "excluded": len(self.jobs) - eligible,
+            "full_coverage": self.coverage_state()[2],
+            "coverage_confirmed": self.coverage_confirmed,
+            "paused": self.paused,
+            "stop_on_full_coverage": getattr(self.args, "stop_on_full_coverage", True),
+            "exit_on_full_coverage": getattr(self.args, "exit_on_full_coverage", False),
+            "report_path": getattr(self.args, "report", None),
             "message": self.message,
             "rows": [
                 {
@@ -459,6 +504,48 @@ class ReplayController:
             ],
         }
 
+    def report(self):
+        data = self.snapshot()
+        data["coverage_definition"] = (
+            "At least one observed successful controller replay per currently discovered eligible "
+            "name/scope variant; includes persisted successes, not worker-image or per-worker coverage. "
+            "Discovery uses bounded recent source history."
+        )
+        data["discovery"] = {
+            "checked_at": self.last_discovery.isoformat() if self.last_discovery else None,
+            "cached_at": self.discovery.cached_at if self.discovery else None,
+            "unavailable_workers": self.discovery.unavailable_workers if self.discovery else None,
+            "complete": self.discovery.complete if self.discovery else False,
+            "workers": self.discovery.workers if self.discovery else 0,
+            "observed_task_ids": self.discovery.task_ids if self.discovery else 0,
+            "confirmed": self.coverage_confirmed,
+        }
+        tasks = {}
+        for record in self.state.db.execute("SELECT task_id, workload, state, created FROM tasks ORDER BY created"):
+            task = dict(record)
+            task["url"] = f"https://firefox-ci-tc.services.mozilla.com/tasks/{task['task_id']}"
+            task["this_invocation"] = task["task_id"] not in getattr(self, "initial_task_ids", set())
+            tasks.setdefault(task["workload"], []).append(task)
+        jobs = {workload_key(self.args.from_pool, job): job for job in self.jobs}
+        for row in data["rows"]:
+            history = self.histories.get(row["key"], {})
+            denied = missing_scopes(jobs[row["key"]].task, self.args.queue, self.granted)
+            row.update(
+                source_task_id=jobs[row["key"]].task_id,
+                source_url=f"https://firefox-ci-tc.services.mozilla.com/tasks/{jobs[row['key']].task_id}",
+                eligible=not denied,
+                missing_scopes=denied,
+                attempts=int(row["attempts"]),
+                successes=int(row["successes"]),
+                consecutive_failures=history.get("failures", 0),
+                last_error=history.get("error", ""),
+                tasks=tasks.get(row["key"], []),
+            )
+            row["failures"] = sum(t["state"] in ("failed", "exception", "rejected") for t in row["tasks"])
+            row["latest_outcome"] = row["tasks"][-1]["state"] if row["tasks"] else None
+        data["outstanding_tasks"] = [t for group in tasks.values() for t in group if t["state"] in ACTIVE]
+        return data
+
     def render(self, max_rows=None):
         table = Table(title=f"Continuous replay: {self.args.from_pool} → {self.args.queue}")
         table.add_column("Workload", no_wrap=True, overflow="ellipsis", ratio=1)
@@ -473,9 +560,19 @@ class ReplayController:
             table.add_row(*cells)
         if len(visible) < len(rows):
             table.caption = f"Showing {len(visible)}/{len(rows)} types; active, unsuccessful, and covered types first"
+        full = self.coverage_state()[2]
         return Group(
             Text(
-                f"Active workers: {self.workers} | Outstanding: {self.outstanding}/{self.limit} | Coverage: {passed}/{eligible} eligible types",
+                f"Active workers: {self.workers} | Outstanding: {self.outstanding}/{self.limit} | "
+                f"{'★ Full coverage' if full else 'Coverage'}: {passed}/{eligible} eligible types | "
+                f"{len(self.jobs) - eligible} excluded",
+                style="bold green" if full else "",
+            ),
+            Text(
+                f"Pause when covered: {'on' if getattr(self.args, 'stop_on_full_coverage', True) else 'off'} | "
+                f"Exit when covered: {'on' if getattr(self.args, 'exit_on_full_coverage', False) else 'off'} | "
+                f"Report: {getattr(self.args, 'report', '-')}",
+                style="dim",
             ),
             table,
             Text(self.message, style="cyan"),

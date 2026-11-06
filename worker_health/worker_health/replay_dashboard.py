@@ -131,7 +131,15 @@ class Dashboard:
                 key = screen.getch()
                 if key in (ord("q"), ord("Q"), 3):
                     self.stop.set()
+                    if getattr(self.args, "replay_wake", None):
+                        self.args.replay_wake.set()
                     return
+                if key in (ord("f"), ord("F"), ord("e"), ord("E")):
+                    setting = "stop_on_full_coverage" if key in (ord("f"), ord("F")) else "exit_on_full_coverage"
+                    setattr(self.args, setting, not getattr(self.args, setting, setting == "stop_on_full_coverage"))
+                    logging.getLogger(__name__).info("%s: %s", setting, getattr(self.args, setting))
+                    if getattr(self.args, "replay_wake", None):
+                        self.args.replay_wake.set()
                 if key == 9:
                     self.focus = 1 - self.focus
                 height = self.dimensions(*screen.getmaxyx())[self.focus]
@@ -155,6 +163,8 @@ class Dashboard:
                     return
             except KeyboardInterrupt:
                 self.stop.set()
+                if getattr(self.args, "replay_wake", None):
+                    self.args.replay_wake.set()
                 return
 
     @staticmethod
@@ -182,7 +192,10 @@ class Dashboard:
         line(0, f"Replay: {self.args.from_pool} → {self.args.queue}", curses.A_BOLD)
         line(
             1,
-            f"Workers: {snapshot.get('workers', 0)} | Outstanding: {snapshot.get('outstanding', 0)}/{snapshot.get('limit', 0)} | Coverage: {snapshot.get('passed', 0)}/{snapshot.get('eligible', 0)} eligible types",
+            f"Workers: {snapshot.get('workers', 0)} | Outstanding: {snapshot.get('outstanding', 0)}/{snapshot.get('limit', 0)} | "
+            f"{'★ Full coverage' if snapshot.get('full_coverage') else 'Coverage'}: "
+            f"{snapshot.get('passed', 0)}/{snapshot.get('eligible', 0)} eligible types | {snapshot.get('excluded', 0)} excluded",
+            self.colors.get(1, 0) | curses.A_BOLD if snapshot.get("full_coverage") else 0,
         )
         by_key = {row["key"]: row for row in snapshot.get("rows", [])}
         # Snapshots already prioritize active and covered workloads. Preserve the
@@ -234,14 +247,24 @@ class Dashboard:
             if sequence == self.log_cursor.selected and self.focus == 1:
                 style |= curses.A_REVERSE
             line(y, f"{'›' if sequence == self.log_cursor.selected else ' '} {text}", style)
+        pause = "on" if getattr(self.args, "stop_on_full_coverage", True) else "off"
+        exiting = "on" if getattr(self.args, "exit_on_full_coverage", False) else "off"
+        line(
+            height - 4,
+            f"F: Pause when covered [{pause}] | E: Exit when covered [{exiting}] | "
+            f"{'PAUSED' if snapshot.get('paused') else 'Scheduling'}",
+            curses.A_BOLD,
+        )
         line(height - 3, snapshot.get("message", "Starting"), self.colors.get(3, 0))
-        line(height - 2, "Tab: pane | ↑/↓: row | PgUp/← PgDn/→: screen | Home/End | Q/Ctrl+C: stop", curses.A_DIM)
+        line(height - 2, f"Report: {getattr(self.args, 'report', None) or 'initializing'}", curses.A_DIM)
+        line(height - 1, "Tab: pane | ↑/↓: row | PgUp/← PgDn/→: screen | Home/End | Q/Ctrl+C: stop", curses.A_DIM)
         screen.refresh()
 
 
 def run_dashboard(args, logs, worker):
     """Run API work off the UI thread; the worker owns its clients and SQLite connection."""
     stop, done = threading.Event(), threading.Event()
+    args.replay_wake = threading.Event()
     lock = threading.Lock()
     current = {}
     result = [0]
@@ -274,5 +297,13 @@ def run_dashboard(args, logs, worker):
         ui_failed = True
     finally:
         stop.set()
+        args.replay_wake.set()
         thread.join(timeout=1)
+        if not done.is_set() and getattr(args, "replay_report", None):
+            try:
+                args.replay_report.finish("manual_stop")
+                args.replay_exit_summary = f"Stopped scheduling; submitted tasks keep running. Report: {args.report}"
+            except OSError as exc:
+                logging.getLogger(__name__).error("Could not finalize coverage report %s: %s", args.report, exc)
+                ui_failed = True
     return 1 if ui_failed else result[0]

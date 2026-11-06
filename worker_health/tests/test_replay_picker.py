@@ -2,7 +2,6 @@ import curses
 
 import pytest
 import taskcluster
-
 from worker_health.replay_picker import (
     Discovery,
     ReplayJob,
@@ -12,7 +11,6 @@ from worker_health.replay_picker import (
     level_one_problem,
     missing_scopes,
 )
-
 
 POOL = "releng-hardware/gecko-t-linux-talos-2404"
 
@@ -122,6 +120,7 @@ def test_discovery_collects_all_worker_histories_and_batches_unique_ids(mocker):
     assert result.jobs[0].task_id == "b"
     assert result.jobs[0].observed == 2
     assert result.jobs[0].seconds == 1200
+    assert result.complete
     assert queue.statuses.call_args.args[0]["taskIds"] == ["a", "b", "l3", "other", "pending"]
     assert "pending" not in queue.tasks.call_args.args[0]["taskIds"]
     manager.listWorkers.assert_called_with("releng-hardware", "gecko-t-linux-talos-2404", continuationToken="next")
@@ -154,9 +153,22 @@ def test_expired_worker_history_keeps_latest_task_and_reports_partial_results(mo
     queue.statuses.return_value = {"statuses": []}
     result = discover_jobs(queue, manager, POOL)
     assert result.unavailable_workers == 1
+    assert not result.complete
     assert result.task_ids == 1
     assert result.jobs == []
     assert caplog.messages == ["Skipping history for g/gone: worker no longer available (HTTP 404)"]
+
+
+@pytest.mark.parametrize("missing", ["status", "definition"])
+def test_partial_discovery_batches_are_not_complete(mocker, missing):
+    manager, queue = mocker.Mock(), mocker.Mock()
+    manager.listWorkers.return_value = {"workers": [{"workerGroup": "g", "workerId": "one"}]}
+    manager.getWorker.return_value = {"recentTasks": [{"taskId": "a"}, {"taskId": "b"}]}
+    queue.statuses.return_value = {"statuses": [status("a")] + ([status("b")] if missing == "definition" else [])}
+    queue.tasks.return_value = {"tasks": [{"taskId": "a", "task": task()}]}
+    result = discover_jobs(queue, manager, POOL)
+    assert len(result.jobs) == 1
+    assert not result.complete
 
 
 def test_empty_pool_does_not_fetch_tasks(mocker):

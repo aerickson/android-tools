@@ -408,7 +408,19 @@ def test_queued_elapsed_and_missing_run_start(setup, state, expected):
 def test_cli_once_dry_run(mocker, tmp_path, capsys):
     mocker.patch(
         "sys.argv",
-        ["replay_tc_pool.py", "--from-pool", SOURCE, "--queue", DESTINATION, "--dry-run", "--once", "--output", "log"],
+        [
+            "replay_tc_pool.py",
+            "--from-pool",
+            SOURCE,
+            "--queue",
+            DESTINATION,
+            "--dry-run",
+            "--once",
+            "--output",
+            "log",
+            "--report",
+            str(tmp_path / "report.json"),
+        ],
     )
     mocker.patch.object(cli, "state_path", return_value=tmp_path / "cli.sqlite3")
     mocker.patch.object(cli, "queue_client")
@@ -417,9 +429,14 @@ def test_cli_once_dry_run(mocker, tmp_path, capsys):
     runner = mocker.patch.object(cli, "ReplayController").return_value
     runner.workers = runner.outstanding = runner.limit = 0
     runner.message = "DRY RUN"
+    runner.report.return_value = {"passed": 0, "eligible": 3, "excluded": 0, "full_coverage": False}
+    runner.exit_ready = False
     assert cli.main() == 0
     runner.tick.assert_called_once()
     runner.render.assert_not_called()
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["exit_reason"] == "once"
+    assert not report["full_coverage"]
 
 
 @pytest.mark.parametrize(
@@ -430,3 +447,150 @@ def test_cli_rejects_bad_limits(mocker, extra):
     mocker.patch("sys.argv", ["replay_tc_pool.py", "--from-pool", SOURCE, "--queue", DESTINATION, *extra])
     with pytest.raises(SystemExit):
         cli.parse_args()
+
+
+def cover_jobs(instance, jobs):
+    for job in jobs:
+        key = controller.workload_key(SOURCE, job)
+        instance.state.ensure_job(key, job.name)
+        with instance.state.db:
+            instance.state.db.execute("UPDATE workloads SET successes=1 WHERE key=?", (key,))
+
+
+def test_default_pauses_and_resumes_only_for_new_types(setup):
+    instance, jobs = setup
+    cover_jobs(instance, jobs[:2])
+    original = jobs.pop()
+    instance.tick()
+    assert instance.paused and not instance.exit_ready
+    assert instance.snapshot()["full_coverage"]
+    instance.queue.createTask.assert_not_called()
+    # A newer source task with the same name/scopes remains covered.
+    jobs[0].task_id = "newer-source"
+    instance.clock = lambda: NOW + timedelta(minutes=10)
+    instance.tick()
+    instance.queue.createTask.assert_not_called()
+    jobs.append(original)
+    instance.clock = lambda: NOW + timedelta(minutes=20)
+    instance.tick()
+    assert not instance.paused
+    assert instance.queue.createTask.call_args.args[1]["extra"]["replay"]["sourceTaskId"] == original.task_id
+    instance.queue.status.return_value = {"status": {"state": "completed"}}
+    instance.clock = lambda: NOW + timedelta(minutes=21)
+    instance.tick()
+    assert instance.paused
+    assert instance.queue.createTask.call_count == 1
+
+
+def test_new_scope_variant_is_uncovered(setup):
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    jobs[0].task["scopes"].append("secrets:get:new")
+    instance.tick()
+    assert not instance.paused
+    instance.queue.createTask.assert_called_once()
+
+
+@pytest.mark.parametrize("stop", [False, True])
+def test_exit_independent_of_pause_and_checks_before_submission(setup, stop):
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    instance.args.stop_on_full_coverage = stop
+    instance.args.exit_on_full_coverage = True
+    instance.tick()
+    assert instance.exit_ready
+    instance.queue.createTask.assert_not_called()
+
+
+def test_disabling_pause_preserves_continuous_rotation(setup):
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    instance.args.stop_on_full_coverage = False
+    instance.tick()
+    assert not instance.paused and not instance.exit_ready
+    instance.queue.createTask.assert_called_once()
+
+
+def test_pause_does_not_rerun_covered_types_while_uncovered_type_in_backoff(setup):
+    instance, jobs = setup
+    cover_jobs(instance, jobs[:2])
+    key = controller.workload_key(SOURCE, jobs[2])
+    instance.state.ensure_job(key, jobs[2].name)
+    with instance.state.db:
+        instance.state.reject(key, "expired inputs", NOW.timestamp(), 300)
+    instance.tick()
+    instance.queue.createTask.assert_not_called()
+
+
+@pytest.mark.parametrize("condition", ["empty", "denied", "unavailable", "partial"])
+def test_uncertain_or_empty_coverage_does_not_exit(setup, condition):
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    instance.args.exit_on_full_coverage = True
+    if condition == "empty":
+        jobs.clear()
+    elif condition == "denied":
+        instance.auth.currentScopes.return_value = {"scopes": []}
+    elif condition == "unavailable":
+        controller.load_discovery.return_value.unavailable_workers = 1
+    else:
+        controller.load_discovery.return_value.complete = False
+    instance.tick()
+    assert not instance.exit_ready
+    assert not instance.snapshot()["full_coverage"]
+
+
+def test_report_has_evidence_and_exclusions_without_task_definitions(setup):
+    instance, _ = setup
+    instance.tick()
+    instance.refresh_view()
+    task_id = instance.state.active()[0]["task_id"]
+    instance.auth.currentScopes.return_value = {"scopes": []}
+    instance.clock = lambda: NOW + timedelta(minutes=1)
+    instance.tick()
+    data = instance.report()
+    assert data["excluded"] == 3
+    assert all(not row["eligible"] and row["missing_scopes"] for row in data["rows"])
+    assert data["outstanding_tasks"][0]["task_id"] == task_id
+    assert data["outstanding_tasks"][0]["this_invocation"]
+    assert '"definition":' not in json.dumps(data)
+
+
+def test_runner_exits_with_final_report_without_submitting(setup, mocker, tmp_path):
+    from rich.console import Console
+
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    instance.args.exit_on_full_coverage = True
+    instance.args.report = str(tmp_path / "final.json")
+    instance.args.output = "log"
+    instance.args.once = False
+    instance.args.poll_interval = 60
+    mocker.patch.object(cli, "queue_client", return_value=instance.queue)
+    mocker.patch.object(cli.taskcluster, "WorkerManager", return_value=instance.manager)
+    mocker.patch.object(cli.taskcluster, "Auth", return_value=instance.auth)
+    mocker.patch.object(cli, "ControllerState").return_value.__enter__.return_value = instance.state
+    mocker.patch.object(cli, "ReplayController", return_value=instance)
+    assert cli.run_controller(instance.args, Console()) == 0
+    report = json.loads((tmp_path / "final.json").read_text())
+    assert report["exit_reason"] == "full_coverage"
+    assert report["full_coverage"] and report["passed"] == 3
+    instance.queue.createTask.assert_not_called()
+
+
+def test_report_failure_returns_nonzero(setup, mocker, tmp_path):
+    from rich.console import Console
+
+    instance, _ = setup
+    instance.args.report = str(tmp_path / "missing" / "report.json")
+    assert cli.run_controller(instance.args, Console()) == 1
+
+
+def test_cli_coverage_defaults_and_overrides(mocker):
+    command = ["replay_tc_pool.py", "--from-pool", SOURCE, "--queue", DESTINATION]
+    mocker.patch("sys.argv", command)
+    args = cli.parse_args()
+    assert args.stop_on_full_coverage and not args.exit_on_full_coverage
+    mocker.patch("sys.argv", command + ["--no-stop-on-full-coverage", "--exit-on-full-coverage"])
+    args = cli.parse_args()
+    assert not args.stop_on_full_coverage and args.exit_on_full_coverage

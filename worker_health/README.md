@@ -202,8 +202,14 @@ uses their latest completed source tasks, and sees bounded recent worker
 history. Types without a successful controller replay are prioritized; ties
 rotate by fewest attempts and oldest attempt, with equally ranked types shuffled
 for variety in the initial sweep. A type has at most one controller
-replay in flight. Once all types have succeeded, the controller continues the
-rotation. Types missing scopes are skipped. Invalid inputs and failed tasks
+replay in flight. By default, covered types are not replayed again: once all
+eligible types have succeeded, submissions pause while monitoring and discovery
+continue. Newly discovered uncovered name/scope variants resume scheduling;
+new source tasks for an already-covered type do not. Use
+`--no-stop-on-full-coverage` for continuous rotation, or
+`--exit-on-full-coverage` to exit successfully at the first confirmed full
+coverage point. Exit is off by default and works independently of pausing.
+Types missing scopes are skipped and counted separately. Invalid inputs and failed tasks
 receive an exponential retry delay starting at five minutes and capped at one
 hour (`--failure-backoff` sets the initial delay).
 
@@ -225,6 +231,9 @@ Both pane headers show the visible row range and total, with `↑ earlier` and
 `↓ more` when content is offscreen. Log positions refer to the retained buffer.
 
 - Tab switches between task and log panes; the focused pane is highlighted.
+- F toggles pause-when-covered (default on); E independently toggles
+  exit-when-covered (default off). Changes wake the scheduler; they take effect
+  at its next coverage check. The settings remain visible in the dashboard.
 - Up/Down moves the cursor one row and scrolls as needed.
 - Page Up/Left and Page Down/Right move one screen.
 - Home/End jumps to the first/last row.
@@ -236,6 +245,21 @@ Both pane headers show the visible row range and total, with `↑ earlier` and
 
 Terminal resizing adjusts both panes. `--once` and non-interactive table output
 print a regular table; `--output log` keeps plain logging for unattended runs.
+
+A bold green `★ Full coverage: N/N eligible types` marks confirmed coverage;
+`0/0` and incomplete discovery do not count as complete. Coverage means observed
+successful controller replays across restarts, not coverage of every worker or
+a newly deployed image. Discovery sees bounded recent source history.
+
+Every invocation writes a JSON report to a unique `/tmp/replay-tc-pool-*.json`
+file; use `--report PATH` to select a persistent location. The path is shown at
+startup, in the dashboard, and on exit. Reports update atomically after each
+cycle and on clean exit, including incomplete runs. They include coverage and
+discovery details, settings, exclusions and missing scopes, per-workload
+attempts/successes/failures, task links, outstanding work, and an exit reason.
+Task entries distinguish existing tasks from submissions during this invocation.
+Credentials and replay task definitions are omitted. Report write failures are
+reported as errors. See the [coverage design notes](docs/REPLAY_COVERAGE_PLAN.md).
 
 Per-destination state is stored under
 `$XDG_STATE_HOME/worker-health/replay-controller` (default:
