@@ -267,7 +267,13 @@ class Dashboard:
         exiting = "on" if getattr(self.args, "exit_on_full_coverage", False) else "off"
         viewing = getattr(self.args, "view_only", False)
         line(height - 6, f"Session: {getattr(self.args, 'session', '-')}", curses.A_DIM)
-        line(height - 5, getattr(self.args, "session_warning", ""), self.colors.get(4, 0) | curses.A_BOLD)
+        selected_status = by_key.get(self.tasks.selected, {}).get("status", "") if self.focus == 0 else ""
+        detail = selected_status if len(selected_status) > 12 else ""
+        line(
+            height - 5,
+            getattr(self.args, "session_warning", "") or detail,
+            self.colors.get(4, 0) | curses.A_BOLD,
+        )
         submissions = "on" if getattr(self.args, "submissions_enabled", False) else "off"
         line(
             height - 4,

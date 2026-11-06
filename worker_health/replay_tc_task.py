@@ -255,6 +255,10 @@ def source_runtime(status):
     return None
 
 
+class ExpiredReplayInputs(ValueError):
+    """A source needs replacement because a required artifact is unavailable."""
+
+
 def check_inputs(queue, source, source_id, now, status=None, progress=lambda message: None):
     problem = level_one_problem(source)
     if problem:
@@ -295,7 +299,7 @@ def check_inputs(queue, source, source_id, now, status=None, progress=lambda mes
             inventories[key] = {artifact["name"]: artifact for artifact in artifacts}
         artifact = inventories[key].get(name)
         if not artifact or artifact.get("storageType") == "error" or parse_timestamp(artifact["expires"]) <= now:
-            raise ValueError(f"Required artifact is missing, expired, or an error: {task_id}/{name}")
+            raise ExpiredReplayInputs(f"Required artifact is missing, expired, or an error: {task_id}/{name}")
     return len(references)
 
 

@@ -612,7 +612,7 @@ def test_disappeared_types_stay_in_session_after_restart(setup):
     assert snapshot["passed"] == snapshot["eligible"] == 3
     historical = next(row for row in snapshot["rows"] if row["key"] == original_key)
     assert historical["coverage"] == "passed"
-    assert historical["status"] == "history only" and not historical["source_present"]
+    assert historical["status"] == "saved source available" and not historical["source_present"]
     resumed = controller.ReplayController(
         instance.queue,
         instance.manager,
@@ -639,8 +639,99 @@ def test_disappeared_untested_type_cannot_make_coverage_complete(setup):
     instance.tick()
     assert instance.snapshot()["eligible"] == 3
     assert not instance.exit_ready
-    assert any(row["name"] == missing.name and row["status"] == "history only" for row in instance.snapshot()["rows"])
+    assert any(
+        row["name"] == missing.name and row["status"] == "saved source available" for row in instance.snapshot()["rows"]
+    )
     instance.queue.createTask.assert_not_called()
+
+
+def test_saved_source_replays_after_restart_without_source_api(setup):
+    instance, jobs = setup
+    jobs[:] = jobs[:1]
+    original = deepcopy(jobs[0])
+    instance.args.submissions_enabled = False
+    instance.tick()
+    jobs.clear()
+    instance.queue.task.side_effect = rest_error(404)
+    instance.args.submissions_enabled = True
+    resumed = controller.ReplayController(
+        instance.queue,
+        instance.manager,
+        instance.auth,
+        instance.state,
+        instance.args,
+        clock=lambda: NOW + timedelta(minutes=10),
+    )
+    resumed.tick()
+    definition = instance.queue.createTask.call_args.args[1]
+    assert definition["payload"]["env"] == original.task["payload"]["env"]
+    assert definition["extra"]["replay"]["sourceTaskId"] == original.task_id
+    instance.queue.task.assert_not_called()
+    assert controller.check_inputs.call_args.kwargs["status"] == {"state": "completed"}
+
+
+@pytest.mark.parametrize(
+    "covered,pause,enabled,submits",
+    [
+        (False, True, True, True),
+        (True, False, True, True),
+        (True, True, True, False),
+        (False, False, False, False),
+    ],
+)
+@pytest.mark.parametrize("missing_dependency", [False, True])
+def test_expired_inputs_wait_for_new_source_and_respect_controls(
+    setup,
+    covered,
+    pause,
+    enabled,
+    submits,
+    missing_dependency,
+):
+    instance, jobs = setup
+    jobs[:] = jobs[:1]
+    instance.args.stop_on_full_coverage = False
+    controller.check_inputs.side_effect = (
+        rest_error(404) if missing_dependency else controller.ExpiredReplayInputs("artifact expired")
+    )
+    instance.tick()
+    assert instance.snapshot()["rows"][0]["status"] == "Inputs expired; waiting for newer job"
+    assert instance.message == "Inputs expired; waiting for newer job"
+    instance.clock = lambda: NOW + timedelta(minutes=10)
+    instance.tick()
+    controller.check_inputs.assert_called_once()  # The same expired source is not retried.
+    if covered:
+        cover_jobs(instance, jobs)
+    jobs[0] = deepcopy(jobs[0])
+    jobs[0].task_id = "fresh-source"
+    jobs[0].completed = (NOW + timedelta(minutes=11)).isoformat()
+    jobs[0].task["payload"]["env"]["FRESH_INPUT"] = "new-build"
+    instance.args.stop_on_full_coverage = pause
+    instance.args.submissions_enabled = enabled
+    instance.clock = lambda: NOW + timedelta(minutes=20)
+    controller.check_inputs.side_effect = None
+    instance.tick()
+    assert instance.queue.createTask.called == submits
+    if submits:
+        definition = instance.queue.createTask.call_args.args[1]
+        assert definition["extra"]["replay"]["sourceTaskId"] == "fresh-source"
+        assert definition["payload"]["env"]["FRESH_INPUT"] == "new-build"
+    assert instance.state.history(controller.workload_key(SOURCE, jobs[0]))["successes"] == int(covered)
+
+
+def test_older_scan_does_not_replace_newer_saved_source(setup):
+    instance, jobs = setup
+    instance.args.submissions_enabled = False
+    instance.tick()
+    original = deepcopy(jobs[0])
+    jobs[0] = deepcopy(original)
+    jobs[0].task_id = "older-source"
+    jobs[0].completed = (NOW - timedelta(days=1)).isoformat()
+    instance.clock = lambda: NOW + timedelta(minutes=10)
+    instance.tick()
+    key = controller.workload_key(SOURCE, original)
+    assert instance.known_jobs[key].task_id == original.task_id
+    assert instance.state.history(key)["source_task_id"] == original.task_id
 
 
 def test_monitoring_reconciles_existing_work_but_never_submits(setup):

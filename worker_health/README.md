@@ -226,9 +226,12 @@ Source history is refreshed every 10 minutes (`--source-refresh-minutes`). As
 with the interactive picker, discovery groups workload types by name and scopes,
 uses their latest completed source tasks, and sees bounded recent worker
 history. Every discovered type is retained for the lifetime of its session,
-including across restarts. Types absent from the latest scan show `history only`
-when idle; they retain their coverage and remain in the totals. Only types in
-the current scan are candidates for new replays. An untested type disappearing
+including across restarts. The session saves full source definitions and their
+observed completion evidence. Types absent from the latest scan show
+`saved source available` when idle and can still be replayed from that definition;
+they retain their coverage and remain in the totals. Older sessions without a
+saved definition show `history only` until discovery finds a source again.
+An untested type disappearing
 does not make coverage complete. Start a new session for a fresh workload set;
 there is no rolling expiration of types within a session.
 
@@ -245,6 +248,13 @@ coverage point. Exit is off by default and works independently of pausing.
 Types missing scopes are skipped and counted separately. Invalid inputs and failed tasks
 receive an exponential retry delay starting at five minutes and capped at one
 hour (`--failure-backoff` sets the initial delay).
+Missing or expired artifacts and missing dependency tasks instead show
+`Inputs expired; waiting for newer job`. The same source is not retried;
+scanning continues and a newer completed source replaces the saved definition
+and its input references without resetting coverage. Scheduling resumes only
+when submissions are enabled and the coverage settings allow that type to run.
+Current permissions, level-1 restrictions, dependencies, and artifacts are still
+validated before submission; saving a definition does not extend input lifetimes.
 
 The live table shows active workers, outstanding tasks, and per-type successes,
 attempts, and readiness. A separate Coverage column shows green `passed`, red

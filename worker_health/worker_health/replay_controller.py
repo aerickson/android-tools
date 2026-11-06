@@ -7,13 +7,14 @@ import logging
 import os
 import random
 import sqlite3
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import taskcluster
 from create_tc_task import format_elapsed
 from replay_tc_task import (
+    ExpiredReplayInputs,
     check_inputs,
     clone_task,
     gen_task_id,
@@ -113,6 +114,10 @@ class ControllerState:
                 self.db.execute("ALTER TABLE workloads ADD COLUMN source_task_id TEXT")
             if "last_seen" not in columns:
                 self.db.execute("ALTER TABLE workloads ADD COLUMN last_seen TEXT")
+            if "source_job" not in columns:
+                self.db.execute("ALTER TABLE workloads ADD COLUMN source_job TEXT")
+            if "expired_source_id" not in columns:
+                self.db.execute("ALTER TABLE workloads ADD COLUMN expired_source_id TEXT")
             self.db.commit()
             return self
         except Exception:
@@ -137,6 +142,21 @@ class ControllerState:
 
     def history(self, key):
         return self.db.execute("SELECT * FROM workloads WHERE key=?", (key,)).fetchone()
+
+    def remember_source(self, key, job):
+        """Discovery supplies completed sources; retain that evidence and definition."""
+        previous = self.history(key)
+        saved = json.loads(previous["source_job"]) if previous["source_job"] else None
+        if saved and saved["completed"] > job.completed:
+            return
+        changed = not saved or saved["task_id"] != job.task_id
+        with self.db:
+            self.db.execute(
+                """UPDATE workloads SET source_job=?, source_task_id=?,
+                expired_source_id=CASE WHEN ? THEN NULL ELSE expired_source_id END,
+                retry_after=CASE WHEN ? THEN 0 ELSE retry_after END WHERE key=?""",
+                (json.dumps(asdict(job)), job.task_id, changed, changed and bool(saved), key),
+            )
 
     def active(self):
         return self.db.execute(
@@ -238,12 +258,17 @@ class ReplayController:
         for key, history in self.histories.items():
             source, name, scopes = json.loads(key)
             if source == self.args.from_pool:
-                self.known_jobs[key] = current.get(key) or ReplayJob(
-                    history.get("source_task_id"),
-                    {"metadata": {"name": name}, "scopes": scopes},
-                    "",
-                    None,
-                    "-",
+                saved = ReplayJob(**json.loads(history["source_job"])) if history.get("source_job") else None
+                self.known_jobs[key] = (
+                    saved
+                    or current.get(key)
+                    or ReplayJob(
+                        history.get("source_task_id"),
+                        {"metadata": {"name": name}, "scopes": scopes},
+                        "",
+                        None,
+                        "-",
+                    )
                 )
 
     def progress(self, message):
@@ -321,7 +346,9 @@ class ReplayController:
                 discovery = discover_jobs(self.queue, self.manager, self.args.from_pool, progress=self.progress)
                 save_discovery(self.args.from_pool, discovery)
             for job in discovery.jobs:
-                self.state.ensure_job(workload_key(self.args.from_pool, job), job.name, job.task_id, now.isoformat())
+                key = workload_key(self.args.from_pool, job)
+                self.state.ensure_job(key, job.name, last_seen=now.isoformat())
+                self.state.remember_source(key, job)
             self.jobs = discovery.jobs
             self.discovery = discovery
             self.last_discovery = now
@@ -360,8 +387,11 @@ class ReplayController:
                 self.message = "Uncertain submission lacks scopes; waiting for permissions"
                 return
             source_id = definition["extra"]["replay"]["sourceTaskId"]
+            history = self.state.history(row["workload"])
+            saved = json.loads(history["source_job"]) if history["source_job"] else None
+            status = {"state": "completed"} if saved and saved["task_id"] == source_id else None
             try:
-                check_inputs(self.queue, definition, source_id, now, progress=self.progress)
+                check_inputs(self.queue, definition, source_id, now, status=status, progress=self.progress)
             except ValueError as exc:
                 if not self.args.dry_run:
                     self.state.set_status(row, "rejected", now.timestamp(), self.args.failure_backoff)
@@ -387,11 +417,13 @@ class ReplayController:
 
         active_types = {row["workload"] for row in self.state.active()}
         candidates = []
-        for job in self.jobs:
+        for job in self.known_jobs.values():
             key = workload_key(self.args.from_pool, job)
             history = self.state.history(key)
             if (
                 key not in active_types
+                and "payload" in job.task
+                and history["expired_source_id"] != job.task_id
                 and not (getattr(self.args, "stop_on_full_coverage", True) and history["successes"])
                 and history["retry_after"] <= now.timestamp()
                 and not missing_scopes(job.task, self.args.queue, self.granted)
@@ -402,7 +434,7 @@ class ReplayController:
         for _, _, _, key, job in sorted(candidates, key=lambda item: item[:3]):
             self.progress(f"Checking inputs: {job.name}")
             try:
-                source = self.queue.task(job.task_id)
+                source = job.task
                 if (
                     source_queue(source) != self.args.from_pool
                     or workload_key(self.args.from_pool, replace(job, task=source)) != key
@@ -411,13 +443,27 @@ class ReplayController:
                 denied = missing_scopes(source, self.args.queue, self.granted)
                 if denied:
                     raise ValueError("Client lacks replay scopes: " + ", ".join(denied))
-                check_inputs(self.queue, source, job.task_id, now, progress=self.progress)
+                check_inputs(
+                    self.queue,
+                    source,
+                    job.task_id,
+                    now,
+                    status={"state": "completed"},
+                    progress=self.progress,
+                )
                 task_id = gen_task_id()
                 definition = clone_task(source, job.task_id, task_id, self.args.queue, now)
             except (ValueError, KeyError, taskcluster.exceptions.TaskclusterFailure) as exc:
                 if not self.args.dry_run:
                     with self.state.db:
                         self.state.reject(key, exc, now.timestamp(), self.args.failure_backoff)
+                        if isinstance(exc, ExpiredReplayInputs) or (
+                            isinstance(exc, taskcluster.exceptions.TaskclusterRestFailure) and exc.status_code == 404
+                        ):
+                            self.state.db.execute(
+                                "UPDATE workloads SET expired_source_id=? WHERE key=?",
+                                (job.task_id, key),
+                            )
                 logger.warning("Skipping %s: %s", job.name, exc)
                 continue
             # Preflight can take time: refresh scopes and capacity just before submission.
@@ -444,7 +490,12 @@ class ReplayController:
             self.submit(row, now)
             self.outstanding += 1
             return  # At most one submission each cycle, even after long preflight checks.
-        self.message = "No eligible workload ready (permissions, in-flight work, or backoff)"
+        self.refresh_view()
+        self.message = (
+            "Inputs expired; waiting for newer job"
+            if any(row.get("expired_source_id") for row in self.histories.values())
+            else "No eligible workload ready (permissions, in-flight work, or backoff)"
+        )
 
     def display_rows(self):
         if not self.view_ready and self.saved_snapshot.get("rows"):
@@ -488,11 +539,15 @@ class ReplayController:
             status = (
                 "missing scopes"
                 if denied
+                else "Inputs expired; waiting for newer job"
+                if history.get("expired_source_id") == job.task_id
                 else {"running": "running", "pending": "queued", "unscheduled": "waiting", "reserved": "uncertain"}.get(
                     task_state,
                     "in flight",
                 )
                 if key in self.active_types
+                else "saved source available"
+                if key not in current_keys and "payload" in job.task
                 else "history only"
                 if key not in current_keys
                 else f"retry in {max(0, int(history['retry_after'] - now))}s"
