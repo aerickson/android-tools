@@ -67,8 +67,7 @@ if __name__ == "__main__":
             p_count += 1
             provisioner_id = item["provisionerId"]
             print(
-                "https://firefox-ci-tc.services.mozilla.com/provisioners/%s"
-                % fg(provisioner_id, 13),
+                "https://firefox-ci-tc.services.mozilla.com/provisioners/%s" % fg(provisioner_id, 13),
             )
             for wt in queue.listWorkerTypes(provisioner_id)["workerTypes"]:
                 # if verbose show wt with pprint
@@ -94,8 +93,7 @@ if __name__ == "__main__":
             if search_term in provisioner_id:
                 m_count += 1
                 print(
-                    "https://firefox-ci-tc.services.mozilla.com/provisioners/%s"
-                    % fg(provisioner_id, 13),
+                    "https://firefox-ci-tc.services.mozilla.com/provisioners/%s" % fg(provisioner_id, 13),
                 )
             for wt in queue.listWorkerTypes(provisioner_id)["workerTypes"]:
                 wt_count += 1
@@ -108,6 +106,5 @@ if __name__ == "__main__":
                         % (provisioner_id, fg(worker_type, 14)),
                     )
         print(
-            "%s matches, scanned %s provisionerIds and %s workerTypes"
-            % (m_count, p_count, wt_count),
+            "%s matches, scanned %s provisionerIds and %s workerTypes" % (m_count, p_count, wt_count),
         )

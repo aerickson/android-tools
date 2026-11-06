@@ -184,9 +184,7 @@ def main():
         return
 
     # Extract worker types
-    worker_type_edges = (
-        worker_types_data.get("data", {}).get("workerTypes", {}).get("edges", [])
-    )
+    worker_type_edges = worker_types_data.get("data", {}).get("workerTypes", {}).get("edges", [])
     worker_types = [edge["node"]["workerType"] for edge in worker_type_edges]
 
     print(f"Found {len(worker_types)} worker types for provisioner 'releng-hardware'")

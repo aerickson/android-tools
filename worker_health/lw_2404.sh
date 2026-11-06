@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
-set -x
+set -e
+# set -x
 
-pipenv run ./list_workers.py releng-hardware gecko-t-linux-talos-2404 "$@"
+PROV="releng-hardware"
+WTYPE="gecko-t-linux-talos-2404"
+
+pipenv run ./list_workers.py "$PROV" "$WTYPE"

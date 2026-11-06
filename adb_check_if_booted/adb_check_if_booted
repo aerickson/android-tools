@@ -17,14 +17,12 @@ set -e
 # 2: sys.boot_completed
 # 3: service.bootanim.exit
 
-PROP_1="init.svc.bootanim"
-PROP_2="sys.boot_completed"
 PROP_3="service.bootanim.exit"
-OUTPUT=`adb shell getprop ${PROP_3} 2>&1 || true`
+OUTPUT=$(adb shell getprop "${PROP_3}" 2>&1 || true)
 
 if [[ "$OUTPUT" == *"error: no devices/emulators found"* ]]; then
 	echo "NOT booted (no device)"
-elif [ "`echo "$OUTPUT" | tr -d '\r' `" != "1" ]; then
+elif [ "$(echo "$OUTPUT" | tr -d '\r')" != "1" ]; then
         echo "NOT booted (${PROP_3} false)"
 else
 	echo "booted (${PROP_3} true)"

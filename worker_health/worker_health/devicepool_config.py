@@ -6,7 +6,6 @@ from git.exc import GitCommandError
 
 
 class DevicepoolConfig:
-
     # TODO: make health.py use this class (currently manages it's own devicepool checkout)
     def __init__(self):
         self.repo_url = "https://github.com/mozilla-platform-ops/mozilla-bitbar-devicepool.git"

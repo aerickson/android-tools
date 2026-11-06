@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 # output prometheus line format
 #   - intended to be called by telegraf
 
-import os
 import argparse
-
+import os
 
 import sentry_sdk
 
@@ -36,7 +34,7 @@ import pprint
 
 import pendulum
 
-from worker_health import bitbar_api, devicepool_config, health, tc_jql, utils
+from worker_health import bitbar_api, devicepool_config, health, tc_api, utils
 
 
 class PromReport:
@@ -91,13 +89,12 @@ class PromReport:
         # get the data for each workerType
         for workerType in tc_current_worker_types:
             workers_arr = []
-            data = tc_jql.get_tc_workers(provisioner, workerType)
-            workers_edges = data["data"]["workers"]["edges"]
-            for item in workers_edges:
+            workers = tc_api.get_tc_workers(provisioner, workerType)
+            for item in workers:
                 worker_blob = {}
-                worker_id = item["node"]["workerId"]
+                worker_id = item["workerId"]
                 # worker_group = item['node']['workerGroup']
-                lastDateActive = item["node"]["lastDateActive"]
+                lastDateActive = item["lastDateActive"]
                 worker_blob["workerId"] = worker_id
                 # worker_blob['workerGroup'] = worker_group
                 worker_blob["lastDateActive"] = lastDateActive
@@ -232,8 +229,6 @@ def prom_report():
         print(
             f'worker_health_missing_or_offline_devices{{workerType="{project}"}} {merged_count[project]}',
         )
-
-    pass
 
 
 def main():

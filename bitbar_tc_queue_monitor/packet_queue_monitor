@@ -24,6 +24,7 @@ except Exception:
 # print("requires manual configuration currently. edit source and rerun.")
 # sys.exit()
 
+
 # removes a single line of whitespace
 def remove_single_whitespace_line(the_string):
     exit_function = False
@@ -49,9 +50,7 @@ with open(os.path.expanduser("~/.tc_quarantine_token")) as json_file:
     data = json.load(json_file)
 creds = {"clientId": data["clientId"], "accessToken": data["accessToken"]}
 
-queue_obj = taskcluster.Queue(
-    {"rootUrl": "https://firefox-ci-tc.services.mozilla.com", "credentials": creds}
-)
+queue_obj = taskcluster.Queue({"rootUrl": "https://firefox-ci-tc.services.mozilla.com", "credentials": creds})
 
 queues_to_check = [
     "terraform-packet/gecko-t-linux",
@@ -82,10 +81,7 @@ for queue in queues_to_check:
 
     # print(queue_obj.pendingTasks(provisioner, workertype))
     # pretty_print(result)
-    print(
-        "%s%s"
-        % ((provisioner + "/" + workertype).ljust(50, " "), result["pendingTasks"])
-    )
+    print("%s%s" % ((provisioner + "/" + workertype).ljust(50, " "), result["pendingTasks"]))
 
     # command = "figlet -d /usr/local/Cellar/figlet/2.2.5/share/figlet/fonts -f doh 168"
     # result = subprocess.run(command.split(' '), stdout=subprocess.PIPE)
@@ -98,9 +94,7 @@ for queue in queues_to_check:
     rendered_string = f.renderText(string_to_render)
 
     # string_to_display = remove_single_whitespace_line(rendered_string.rstrip())
-    string_to_display = pad_entire_string(
-        remove_single_whitespace_line(rendered_string.rstrip())
-    )
+    string_to_display = pad_entire_string(remove_single_whitespace_line(rendered_string.rstrip()))
     print(string_to_display)
     print()
 

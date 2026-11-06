@@ -30,16 +30,14 @@ if __name__ == "__main__":
         "--alert-percent",
         default=fitness.ALERT_PERCENT,
         type=float,
-        help="percentage of successful jobs to alert at. 0 to 1, defaults to %s."
-        % fitness.ALERT_PERCENT,
+        help="percentage of successful jobs to alert at. 0 to 1, defaults to %s." % fitness.ALERT_PERCENT,
     )
     parser.add_argument(
         "-t",
         "--alert-time",
         default=fitness.ALERT_TIME,
         type=int,
-        help="alert if a worker hasn't worked in this many minutes, defaults to %s."
-        % fitness.ALERT_TIME,
+        help="alert if a worker hasn't worked in this many minutes, defaults to %s." % fitness.ALERT_TIME,
     )
     parser.add_argument(
         "-o",

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
 set -e
-set -x
+# set -x
 
 PROV="releng-hardware"
 WTYPE="gecko-t-linux-talos-2404"
 
-pipenv run ./quarantine_tool.py "$PROV" "$WTYPE" "$@"
+VENV=$(pipenv --venv)
+"$VENV"/bin/python ./quarantine_tool.py "$PROV" "$WTYPE" "$@"

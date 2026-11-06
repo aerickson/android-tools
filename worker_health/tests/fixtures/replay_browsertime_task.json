@@ -1,0 +1,261 @@
+{
+  "provisionerId": "releng-hardware",
+  "workerType": "gecko-t-linux-talos-2404",
+  "taskQueueId": "releng-hardware/gecko-t-linux-talos-2404",
+  "schedulerId": "gecko-level-3",
+  "projectId": "none",
+  "taskGroupId": "eJbNe9liQb6Bg0JkftiBnA",
+  "dependencies": [
+    "Aje6hIF4QvWwGpili7W2WQ",
+    "GNu9eXx8RjqvBtifdnjwbw",
+    "GSYCSe06SfGuNqIK9tZ1HQ",
+    "LcdBA3doTKGG7PS8jKCGkw",
+    "Pr6iAq3pS9ukYsmQEAGK5A",
+    "Ryy1dxafSXK0h80GYlrJPA",
+    "SMGSzOtdSUSAtxxI0pq4Cw",
+    "Z6UKyPL2T16SHy0XdhNOmQ",
+    "ZQCwhgAWRdiYfIWbYBauzw",
+    "bA5qkZl4TlqATzo7lXTTyw",
+    "dLLPSJ3BSuGnsYyc65uowg"
+  ],
+  "requires": "all-completed",
+  "routes": [
+    "tc-treeherder.v2.autoland.42c7fc071da85ee8fe413d5270ec4b184bdc4f8e"
+  ],
+  "priority": "high",
+  "retries": 5,
+  "created": "2026-11-04T23:45:07.862Z",
+  "deadline": "2026-11-05T23:45:07.862Z",
+  "expires": "2027-11-04T23:45:07.862Z",
+  "scopes": [
+    "secrets:get:project/perftest/gecko/level-3/perftest-login",
+    "generic-worker:cache:gecko-level-3-pip-v3-c39e2ac14e93e4eafda9",
+    "generic-worker:cache:gecko-level-3-uv-v3-c39e2ac14e93e4eafda9"
+  ],
+  "payload": {
+    "env": {
+      "PYTHON": "/usr/bin/python3",
+      "UPLOAD_DIR": "public/build",
+      "MOZ_FETCHES": "[{\"artifact\":\"public/build/browsertime.tar.zst\",\"extract\":true,\"task\":\"Z6UKyPL2T16SHy0XdhNOmQ\"},{\"artifact\":\"public/build/fix-stacks.tar.zst\",\"extract\":true,\"task\":\"LcdBA3doTKGG7PS8jKCGkw\"},{\"artifact\":\"public/build/geckodriver.tar.gz\",\"extract\":true,\"task\":\"Aje6hIF4QvWwGpili7W2WQ\"},{\"artifact\":\"public/build/minidump-stackwalk.tar.zst\",\"extract\":true,\"task\":\"bA5qkZl4TlqATzo7lXTTyw\"},{\"artifact\":\"public/build/node.tar.zst\",\"extract\":true,\"task\":\"Ryy1dxafSXK0h80GYlrJPA\"},{\"artifact\":\"public/build/profiler-node-tools.tar.zst\",\"extract\":true,\"task\":\"SMGSzOtdSUSAtxxI0pq4Cw\"},{\"artifact\":\"public/build/samply.tar.zst\",\"extract\":true,\"task\":\"ZQCwhgAWRdiYfIWbYBauzw\"},{\"artifact\":\"public/build/target.crashreporter-symbols.zip\",\"extract\":false,\"task\":\"dLLPSJ3BSuGnsYyc65uowg\"},{\"artifact\":\"public/build/uv.tar.zst\",\"extract\":true,\"task\":\"GNu9eXx8RjqvBtifdnjwbw\"},{\"artifact\":\"public/ffmpeg-master-latest-linux64-gpl-shared.tar.xz\",\"extract\":true,\"task\":\"Pr6iAq3pS9ukYsmQEAGK5A\"}]",
+      "MOZ_UV_HOME": "fetches/uv",
+      "UV_CACHE_DIR": ".task-cache/uv",
+      "MOZ_SCM_LEVEL": "3",
+      "PIP_CACHE_DIR": ".task-cache/pip",
+      "GECKO_HEAD_REV": "42c7fc071da85ee8fe413d5270ec4b184bdc4f8e",
+      "MOZ_AUTOMATION": "1",
+      "MOZ_BUILD_DATE": "20261104234336",
+      "MOZ_FETCHES_DIR": "fetches",
+      "MOZ_SOURCE_REPO": "https://hg.mozilla.org/integration/autoland",
+      "SCCACHE_DISABLE": "1",
+      "RAPTOR_TASK_LABEL": "test-linux2404-64-shippable/opt-browsertime-tp6-firefox-google-docs",
+      "MOZ_SOURCE_GIT_REPO": "https://github.com/mozilla-firefox/firefox",
+      "MOZ_SOURCE_CHANGESET": "42c7fc071da85ee8fe413d5270ec4b184bdc4f8e",
+      "GECKO_HEAD_REPOSITORY": "https://hg.mozilla.org/integration/autoland",
+      "EXTRA_MOZHARNESS_CONFIG": "{\"installer_url\":\"https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/dLLPSJ3BSuGnsYyc65uowg/artifacts/public/build/target.tar.xz\",\"test_packages_url\":\"https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/dLLPSJ3BSuGnsYyc65uowg/artifacts/public/build/target.test_packages.json\"}",
+      "RUN_TASK_RESOURCE_USAGE": "run-task-resource-usage.json",
+      "MOZ_SOURCE_GIT_CHANGESET": "6be9060d005fc8ff1e8c6d97f7c187d398cdf0cf",
+      "PERFHERDER_EXTRA_OPTIONS": "raptor",
+      "RUN_TASK_PRE_COMMAND_HOOK": "./run-task-setup.py",
+      "RUN_TASK_RESOURCE_USAGE_NAME": "test-linux2404-64-shippable/opt-browsertime-tp6-firefox-google-docs",
+      "PERFHERDER_FETCH_CONTENT_JSON_PATH": "./perf/perfherder-data-fetch-content.json"
+    },
+    "mounts": [
+      {
+        "format": "zip",
+        "content": {
+          "taskId": "dLLPSJ3BSuGnsYyc65uowg",
+          "artifact": "public/build/mozharness.zip"
+        },
+        "directory": "mozharness"
+      },
+      {
+        "cacheName": "gecko-level-3-pip-v3-c39e2ac14e93e4eafda9",
+        "directory": ".task-cache/pip"
+      },
+      {
+        "cacheName": "gecko-level-3-uv-v3-c39e2ac14e93e4eafda9",
+        "directory": ".task-cache/uv"
+      },
+      {
+        "file": "./run-task",
+        "content": {
+          "url": "http://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/eJbNe9liQb6Bg0JkftiBnA/artifacts/public/run-task-hg"
+        }
+      },
+      {
+        "file": "./run_task_resource_monitor.py",
+        "content": {
+          "url": "http://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/eJbNe9liQb6Bg0JkftiBnA/artifacts/public/run_task_resource_monitor.py"
+        }
+      },
+      {
+        "file": "./mozsystemmonitor/resourcemonitor.py",
+        "content": {
+          "url": "http://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/eJbNe9liQb6Bg0JkftiBnA/artifacts/public/resourcemonitor.py"
+        }
+      },
+      {
+        "format": "zip",
+        "content": {
+          "taskId": "GSYCSe06SfGuNqIK9tZ1HQ",
+          "artifact": "public/psutil-linux-x86_64.whl"
+        },
+        "directory": "./resource-monitor-deps/linux-x86_64"
+      },
+      {
+        "file": "./fetch-content",
+        "content": {
+          "url": "http://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/eJbNe9liQb6Bg0JkftiBnA/artifacts/public/fetch-content"
+        }
+      },
+      {
+        "file": "./run-task-setup.py",
+        "content": {
+          "url": "http://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/eJbNe9liQb6Bg0JkftiBnA/artifacts/public/run-task-setup.py"
+        }
+      }
+    ],
+    "command": [
+      [
+        "chmod",
+        "+x",
+        "run-task"
+      ],
+      [
+        "./run-task",
+        "--",
+        "/usr/bin/python3",
+        "-u",
+        "mozharness/scripts/raptor_script.py",
+        "--cfg",
+        "mozharness/configs/raptor/linux_config.py",
+        "--chimera",
+        "--conditioned-profile=settled",
+        "--extra-profiler-run",
+        "--browsertime-video",
+        "--browsertime-visualmetrics",
+        "--app=firefox",
+        "--test=google-docs",
+        "--project=autoland",
+        "--browsertime-browsertimejs",
+        "$MOZ_FETCHES_DIR/browsertime/node_modules/browsertime/bin/browsertime.js",
+        "--browsertime-node",
+        "$MOZ_FETCHES_DIR/node/bin/node",
+        "--browsertime-geckodriver",
+        "$MOZ_FETCHES_DIR/geckodriver",
+        "--browsertime-chromedriver",
+        "$MOZ_FETCHES_DIR/{}cft-chromedriver-linux/chromedriver",
+        "--browsertime-ffmpeg",
+        "$MOZ_FETCHES_DIR/ffmpeg-n7.1-linux64-gpl-7.1/bin/ffmpeg",
+        "--download-symbols",
+        "ondemand"
+      ]
+    ],
+    "features": {
+      "taskclusterProxy": true
+    },
+    "artifacts": [
+      {
+        "name": "public/build",
+        "path": "public/build",
+        "type": "directory",
+        "expires": "2027-11-04T23:45:07.862Z"
+      },
+      {
+        "name": "public/logs",
+        "path": "logs",
+        "type": "directory",
+        "expires": "2027-11-04T23:45:07.862Z"
+      },
+      {
+        "name": "public/test_info",
+        "path": "build/blobber_upload_dir",
+        "type": "directory",
+        "expires": "2027-11-04T23:45:07.862Z"
+      },
+      {
+        "name": "public/profile_run-task-resource-usage.json",
+        "path": "run-task-resource-usage.json",
+        "type": "file",
+        "expires": "2027-11-04T23:45:07.862Z"
+      },
+      {
+        "name": "public/fetch/perfherder-data-fetch-content.json",
+        "path": "./perf/perfherder-data-fetch-content.json",
+        "type": "file",
+        "expires": "2027-11-04T23:45:07.862Z"
+      },
+      {
+        "name": "perftest",
+        "path": "build/perftest",
+        "type": "directory",
+        "expires": "2027-11-04T23:45:07.862Z"
+      }
+    ],
+    "maxRunTime": 4000,
+    "onExitStatus": {
+      "retry": [
+        4
+      ]
+    }
+  },
+  "metadata": {
+    "name": "test-linux2404-64-shippable/opt-browsertime-tp6-firefox-google-docs",
+    "owner": "tester@mozilla.com",
+    "source": "https://hg.mozilla.org/integration/autoland/file/42c7fc071da85ee8fe413d5270ec4b184bdc4f8e/taskcluster/kinds/browsertime",
+    "description": "Raptor (browsertime) tp6 page-load tests on Firefox on google-docs ([Treeherder job](https://treeherder.mozilla.org/#/jobs?repo=autoland&revision=42c7fc071da85ee8fe413d5270ec4b184bdc4f8e&selectedTaskRun=ICHaZTMDTx2YY-fM3qlVXA))"
+  },
+  "tags": {
+    "os": "linux",
+    "kind": "browsertime",
+    "label": "test-linux2404-64-shippable/opt-browsertime-tp6-firefox-google-docs",
+    "project": "autoland",
+    "retrigger": "true",
+    "test-type": "raptor",
+    "test-suite": "raptor",
+    "trust-domain": "gecko",
+    "test-platform": "linux2404-64-shippable/opt",
+    "createdForUser": "tester@mozilla.com",
+    "worker-implementation": "generic-worker"
+  },
+  "extra": {
+    "index": {
+      "rank": 1793835816
+    },
+    "suite": "raptor",
+    "chunks": {
+      "total": 1,
+      "current": 1
+    },
+    "parent": "eJbNe9liQb6Bg0JkftiBnA",
+    "treeherder": {
+      "tier": 1,
+      "symbol": "gdocs",
+      "jobKind": "test",
+      "machine": {
+        "platform": "linux2404-64-shippable"
+      },
+      "groupName": "Browsertime performance tests on Firefox",
+      "collection": {
+        "opt": true
+      },
+      "groupSymbol": "Btime"
+    },
+    "test-setting": {
+      "_hash": "b08e266fa36f",
+      "build": {
+        "type": "opt",
+        "shippable": true
+      },
+      "runtime": {},
+      "platform": {
+        "os": {
+          "name": "linux",
+          "version": "2404"
+        },
+        "arch": "64"
+      }
+    },
+    "treeherder-platform": "linux2404-64-shippable/opt"
+  }
+}

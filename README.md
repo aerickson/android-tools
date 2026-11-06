@@ -2,7 +2,7 @@
 
 tools for working with Android things at Mozilla
 
-[![CircleCI Status](https://circleci.com/gh/mozilla-platform-ops/android-tools.svg?style=svg)](https://app.circleci.com/pipelines/github/mozilla-platform-ops/android-tools)
+[![CI](https://github.com/mozilla-platform-ops/android-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/mozilla-platform-ops/android-tools/actions/workflows/ci.yml)
 
 ## installation
 

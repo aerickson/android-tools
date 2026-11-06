@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
-import re
 import pprint
-import pendulum
+import re
 
-from worker_health import quarantine
-from worker_health import tc
+import pendulum
 from worker_health.utils import date_in_past, human_delta
+
+from worker_health import quarantine, tc
 
 
 def natural_sort_key(s, _nsre=re.compile("([0-9]+)")):
@@ -47,6 +47,12 @@ if __name__ == "__main__":
         "--reason",
         help="why the instance is being quarantined",
     )
+    parser_quarantine.add_argument(
+        "-d",
+        "--duration",
+        default="10 years",
+        help="how long to quarantine (e.g. '5 days', '2 weeks', '10 years'). default: 10 years",
+    )
     parser_quarantine.add_argument("hosts", nargs="?")
     # lift
     parser_lift = sub_parsers.add_parser(
@@ -83,15 +89,13 @@ if __name__ == "__main__":
             parser.error("you must specify a comma-separated string of hosts")
         host_arr = args.hosts.split(",")
         q = quarantine.Quarantine()
-        if args.reason:
-            q.quarantine(
-                args.provisioner,
-                args.worker_type,
-                host_arr,
-                reason=args.reason,
-            )
-        else:
-            q.quarantine(args.provisioner, args.worker_type, host_arr)
+        q.quarantine(
+            args.provisioner,
+            args.worker_type,
+            host_arr,
+            duration=args.duration,
+            **({"reason": args.reason} if args.reason else {}),
+        )
     elif args.action == "lift":
         if args.hosts is None:
             parser.error("you must specify a comma-separated string of hosts")
@@ -114,6 +118,7 @@ if __name__ == "__main__":
         results = q.get_quarantined_workers_structured(
             provisioner=args.provisioner,
             worker_type=args.worker_type,
+            skip_details=args.verbose == 0,
         )
         if not results:
             print("no results")
@@ -122,7 +127,7 @@ if __name__ == "__main__":
             quarantined_workers = results["quarantined_workers"]
             formatted_workers = sorted(
                 quarantined_workers,
-                key=lambda d: "{0:0>8}".format(d.replace("macmini-r8-", "")),
+                key=lambda d: "{:0>8}".format(d.replace("macmini-r8-", "")),
             )
             if args.verbose == 3:
                 print(",".join(formatted_workers))
@@ -138,19 +143,31 @@ if __name__ == "__main__":
                         user = entry["clientId"].split("|")[2]
                         in_past = date_in_past(date_until)
                         time_diff = pendulum.now() - date_obj
+                        until_obj = pendulum.parse(date_until)
+                        until_diff = abs((pendulum.now() - until_obj).total_seconds())
+                        expiry_str = (
+                            f"expired {human_delta(until_diff)} ago"
+                            if in_past
+                            else f"expires in {human_delta(until_diff)}"
+                        )
                         output_line = ""
                         if in_past:
                             # lifting
-                            output_line = f"  L/{user}: {reason},  {human_delta(time_diff.total_seconds())} ago"
+                            output_line = (
+                                f"  L/{user}: {reason},  set {human_delta(time_diff.total_seconds())} ago, {expiry_str}"
+                            )
                         else:
                             # quarantining
-                            output_line = f"  Q/{user}: {reason},  {human_delta(time_diff.total_seconds())} ago"
+                            output_line = (
+                                f"  Q/{user}: {reason},  set {human_delta(time_diff.total_seconds())} ago, {expiry_str}"
+                            )
                         if args.verbose == 2:
                             print(output_line)
                     if args.verbose == 1:
                         print(output_line)  # only show latest event at -v/1
             else:
                 print(",".join(formatted_workers))
+            print(f"total quarantined: {len(formatted_workers)}")
     elif args.action == "show-all":
         # TODO: check that the worker_type is valid
         results = tc.get_workers(args.provisioner, args.worker_type)
@@ -161,11 +178,11 @@ if __name__ == "__main__":
         #   - split on '-' and others and use last part?
         sorted_list_of_dicts = sorted(
             results["workers"],
-            key=lambda d: "{0:0>8}".format(d["workerId"].replace("macmini-r8-", "")),
+            key=lambda d: "{:0>8}".format(d["workerId"].replace("macmini-r8-", "")),
         )
 
         for item in sorted_list_of_dicts:
-            output += "%s," % item["workerId"]
+            output += f"{item['workerId']},"
         # trim last comma off
         print(output[0:-1])
 

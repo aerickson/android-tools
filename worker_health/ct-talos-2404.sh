@@ -3,6 +3,8 @@
 set -e
 # set -x
 
+PROV_AND_WORKER_TYPE="releng-hardware/gecko-t-linux-talos-2404"
+
 # check that count argument is provided
 if [ -z "$1" ]; then
     echo "Usage: $0 <count> [additional arguments]"
@@ -12,4 +14,4 @@ fi
 COUNT="$1"
 shift
 
-./create_tc_task.py -q releng-hardware/gecko-t-linux-talos-2404 -c "$COUNT" "$@"
+pipenv run -- python ./create_tc_task.py -q "$PROV_AND_WORKER_TYPE" -c "$COUNT" "$@"

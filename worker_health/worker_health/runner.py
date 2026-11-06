@@ -344,7 +344,8 @@ class Runner:
         subprocess.run(
             cmd,
             shell=True,
-            check=True,
+            # No known_hosts entry is expected on a host's first run.
+            check=False,
             stderr=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
         )
@@ -438,7 +439,8 @@ class Runner:
         subprocess.run(
             cmd,
             shell=True,
-            check=True,
+            # No known_hosts entry is expected on a host's first run.
+            check=False,
             stderr=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
         )

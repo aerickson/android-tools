@@ -20,9 +20,7 @@ with open(os.path.expanduser("~/.tc_quarantine_token")) as json_file:
     data = json.load(json_file)
 creds = {"clientId": data["clientId"], "accessToken": data["accessToken"]}
 
-queue = taskcluster.Queue(
-    {"rootUrl": "https://firefox-ci-tc.services.mozilla.com", "credentials": creds}
-)
+queue = taskcluster.Queue({"rootUrl": "https://firefox-ci-tc.services.mozilla.com", "credentials": creds})
 
 pdb.set_trace()
 

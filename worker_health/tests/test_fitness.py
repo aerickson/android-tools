@@ -10,7 +10,5 @@ def test_bin_fitness():
     cmd = ["./fitness_check.py", "-h"]
 
     # excute script
-    pipe = subprocess.run(
-        cmd, cwd=root_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
+    pipe = subprocess.run(cmd, cwd=root_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert pipe.returncode == 0

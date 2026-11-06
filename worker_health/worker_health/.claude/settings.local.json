@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/aerickson/git/worker_rehab_tool/rehab/**)"
+    ]
+  }
+}

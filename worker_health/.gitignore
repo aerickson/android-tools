@@ -26,3 +26,6 @@ MANIFEST
 sr_*
 ur_*
 runner_run_*
+pssh*
+hg-clone-network-check-*
+hg-clone-configuration-comparison-*

@@ -84,7 +84,9 @@ class DevicePoolConfigGenerator:
     @staticmethod
     def split_list(a_list, slice_start=0, slice_end=0.5):
         newList = a_list[
-            int(len(a_list) * slice_start) : int(len(a_list) * slice_end)  # noqa: E203
+            int(len(a_list) * slice_start) : int(
+                len(a_list) * slice_end,
+            )  # noqa: E203
         ]
         return newList
 
@@ -118,9 +120,7 @@ class DevicePoolConfigGenerator:
         else:
             raise Exception("invalid input string '%s'!" % a_string)
 
-    def extract_devices_from_device_groups(
-        self, device_groups, device_groups_to_extract
-    ):
+    def extract_devices_from_device_groups(self, device_groups, device_groups_to_extract):
         result_dict = OrderedDict()
         for dge in device_groups_to_extract:
             dg_device_type = self.device_type_from_string(dge)
@@ -162,10 +162,7 @@ class DevicePoolConfigGenerator:
     def generate(self):
         # TODO: take path to this file as arg, don't imply it's in .
         if not os.path.exists(self.get_path(self.original_config_file_name)):
-            raise DPCGException(
-                "Can't find %s in %s!"
-                % (self.original_config_file_name, self.config_dir)
-            )
+            raise DPCGException("Can't find %s in %s!" % (self.original_config_file_name, self.config_dir))
 
         #### configuration ideas
         # meta:
@@ -186,13 +183,13 @@ class DevicePoolConfigGenerator:
         # tc-w queue first
         mapping_dict = {}
         mapping_dict["motog5-perf-2"] = {
-            "g-w": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/pending/proj-autophone/gecko-t-bitbar-gw-perf-g5"
+            "g-w": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/pending/proj-autophone/gecko-t-bitbar-gw-perf-g5",
         }
         mapping_dict["pixel2-perf-2"] = {
-            "g-w": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/pending/proj-autophone/gecko-t-bitbar-gw-perf-p2"
+            "g-w": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/pending/proj-autophone/gecko-t-bitbar-gw-perf-p2",
         }
         mapping_dict["pixel2-unit-2"] = {
-            "g-w": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/pending/proj-autophone/gecko-t-bitbar-gw-unit-p2"
+            "g-w": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/pending/proj-autophone/gecko-t-bitbar-gw-unit-p2",
         }
 
         if verbose:
@@ -216,13 +213,9 @@ class DevicePoolConfigGenerator:
         split_dict = OrderedDict()  # stores our modified device groups
         dg_raw_yml = config_yml["device_groups"]
         managed_dgs = sorted(["pixel2-unit-2", "pixel2-perf-2", "motog5-perf-2"])
-        managed_devices_by_type_dict = self.extract_devices_from_device_groups(
-            dg_raw_yml, managed_dgs
-        )
+        managed_devices_by_type_dict = self.extract_devices_from_device_groups(dg_raw_yml, managed_dgs)
 
-        total_managed_devices = self.device_structure_count(
-            managed_devices_by_type_dict
-        )
+        total_managed_devices = self.device_structure_count(managed_devices_by_type_dict)
         if verbose:
             print("---------------- phase 1: load managed devices")
             print("managed device groups:")
@@ -265,9 +258,7 @@ class DevicePoolConfigGenerator:
                     else:
                         decision.setdefault(device_type, {})[dg] = 0
             else:
-                raise Exception(
-                    "my mind is blown! don't know how to handle this (%s)" % queue_len
-                )
+                raise Exception("my mind is blown! don't know how to handle this (%s)" % queue_len)
 
         ### TESTING: override this value
         # decision = {'motog5': {'motog5-perf-2': 1.0},
@@ -302,22 +293,13 @@ class DevicePoolConfigGenerator:
                 queues_handled = 1
                 # TODO: indicate that this is based on sorting (and minimums), or figure out a better way to sort... an importance weight?
                 # sort this, we need small percentage first so it gets a minimum
-                for queue, percentage in sorted(
-                    v.items(), key=lambda x: x[1], reverse=False
-                ):
+                for queue, percentage in sorted(v.items(), key=lambda x: x[1], reverse=False):
                     if queues_handled == 1:
-                        device_decision.setdefault(dt, {})[queue] = int(
-                            percentage * devices_left
-                        )
+                        device_decision.setdefault(dt, {})[queue] = int(percentage * devices_left)
                         # add minimum devices if configured
                         if queue in minimum_device_dict.keys():
-                            if (
-                                device_decision.setdefault(dt, {})[queue]
-                                < minimum_device_dict[queue]
-                            ):
-                                device_decision.setdefault(dt, {})[
-                                    queue
-                                ] = minimum_device_dict[queue]
+                            if device_decision.setdefault(dt, {})[queue] < minimum_device_dict[queue]:
+                                device_decision.setdefault(dt, {})[queue] = minimum_device_dict[queue]
                                 if verbose:
                                     print("setting minimum for %s" % queue)
                         devices_left -= device_decision.setdefault(dt, {})[queue]
@@ -325,15 +307,10 @@ class DevicePoolConfigGenerator:
                         device_decision.setdefault(dt, {})[queue] = devices_left
                     queues_handled += 1
             else:
-                raise Exception(
-                    "my mind is blown 2! don't know how to handle this (%s)"
-                    % queue_count
-                )
+                raise Exception("my mind is blown 2! don't know how to handle this (%s)" % queue_count)
 
         if verbose:
-            print(
-                "---------------- phase 3.5: convert ratios to devices (with minimums)"
-            )
+            print("---------------- phase 3.5: convert ratios to devices (with minimums)")
             print("device decision: ")
             pprint.pprint(device_decision)
 
@@ -347,9 +324,7 @@ class DevicePoolConfigGenerator:
 
             # TODO: sanity check here
             if temp_counts["total"] != total_managed_devices:
-                print(
-                    "WARNING: counts don't match (should be %s)" % total_managed_devices
-                )
+                print("WARNING: counts don't match (should be %s)" % total_managed_devices)
 
         for device_type, device_groups in device_decision.items():
             if len(device_groups) == 1:
@@ -361,13 +336,11 @@ class DevicePoolConfigGenerator:
                 devices_allocated = 0
                 for dg, host_count in device_groups.items():
                     split_dict[dg] = devices_to_work_with[
-                        devices_allocated : (  # noqa: E203
+                        devices_allocated :   (  # noqa: E203
                             int(host_count) + devices_allocated
                         )
                     ]
-                    devices_allocated = (
-                        devices_allocated + int(host_count) + devices_allocated
-                    )
+                    devices_allocated = devices_allocated + int(host_count) + devices_allocated
 
         if verbose:
             print("---------------- phase 4: split device groups")
@@ -407,10 +380,7 @@ class DevicePoolConfigGenerator:
         print("devices used/managed: %s/%s" % (total_devices, total_managed_devices))
 
         if total_devices != total_managed_devices:
-            print(
-                "Not all devices were used! (%s, %s)"
-                % (total_devices, total_managed_devices)
-            )
+            print("Not all devices were used! (%s, %s)" % (total_devices, total_managed_devices))
             sys.exit(1)
 
         if verbose:
@@ -447,7 +417,7 @@ class DevicePoolConfigGenerator:
                     else:
                         print(
                             "service NOT restarted. restart command likely failed (rc: %s)"
-                            % restart_command.returncode
+                            % restart_command.returncode,
                         )
             else:
                 print("Config did not change.")
@@ -467,20 +437,14 @@ if __name__ == "__main__":
         action="store_true",
         help="run in daemon mode (continuously)",
     )
-    parser.add_argument(
-        "-c", "--config-dir", help="path to the directory with config.yml"
-    )
-    parser.add_argument(
-        "-v", "--verbose", help="verbose mode", action="store_true", default=False
-    )
+    parser.add_argument("-c", "--config-dir", help="path to the directory with config.yml")
+    parser.add_argument("-v", "--verbose", help="verbose mode", action="store_true", default=False)
     args = parser.parse_args()
 
     # hacky
     verbose = args.verbose
 
-    dpcg = DevicePoolConfigGenerator(
-        config_dir=args.config_dir, daemon_mode=args.daemon
-    )
+    dpcg = DevicePoolConfigGenerator(config_dir=args.config_dir, daemon_mode=args.daemon)
     try:
         dpcg.main()
     except DPCGException as e:

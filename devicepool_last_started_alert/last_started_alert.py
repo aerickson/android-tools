@@ -156,9 +156,7 @@ class LastStarted:
         hostname = socket.gethostname()
         dedup_key = self.get_dedup_key()
 
-        self.pd_session.trigger(
-            summary, hostname, dedup_key=dedup_key, severity="critical"
-        )
+        self.pd_session.trigger(summary, hostname, dedup_key=dedup_key, severity="critical")
         self.set_dedup_key(dedup_key)
         self.set_currently_alerting()
 
@@ -198,9 +196,7 @@ class LastStarted:
 
     def get_journalctl_output(self):
         # NOTE: user running needs to be in adm group to not need sudo
-        cmd = (
-            "journalctl -u bitbar --since '%s minutes ago'" % MINUTES_OF_LOGS_TO_INSPECT
-        )
+        cmd = "journalctl -u bitbar --since '%s minutes ago'" % MINUTES_OF_LOGS_TO_INSPECT
         res = self.run_cmd(cmd)
 
         lines = res.split("\n")
@@ -209,11 +205,7 @@ class LastStarted:
         return res
 
     def run_cmd(self, cmd):
-        return (
-            subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True)
-            .strip()
-            .decode()
-        )
+        return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True).strip().decode()
 
     def write_toml(self, dict_to_write):
         with open(STATE_FILE, "w") as writer:
@@ -257,12 +249,8 @@ current_dedup_key = ""
             print("Currently alerting?: %s" % currently_alerting)
             if args.verbose > 1:
                 print("Unused metrics:")
-                print(
-                    "  Lines of journalctl output: %s" % self.journalctl_lines_of_output
-                )
-                print(
-                    "  Enough lines of journalctl output?: %s" % enough_journalctl_lines
-                )
+                print("  Lines of journalctl output: %s" % self.journalctl_lines_of_output)
+                print("  Enough lines of journalctl output?: %s" % enough_journalctl_lines)
             print("Decision metrics:")
             print("  Jobs in queues: %s" % jobs_in_queues)
             print("  Running lines present?: %s" % running_lines_present)
@@ -285,13 +273,10 @@ current_dedup_key = ""
             consecutive_failed_checks_to_alert_at = 2
             if triggered_now:
                 self.consecutive_failed_checks += 1
-                if (
-                    self.consecutive_failed_checks
-                    >= consecutive_failed_checks_to_alert_at
-                ):
+                if self.consecutive_failed_checks >= consecutive_failed_checks_to_alert_at:
                     print(
                         "*** Alert conditions met (%s consecutive failed checks)! Sending trigger event."
-                        % self.consecutive_failed_checks
+                        % self.consecutive_failed_checks,
                     )
                     self.trigger_event()
                 else:
@@ -300,7 +285,7 @@ current_dedup_key = ""
                         % (
                             self.consecutive_failed_checks,
                             consecutive_failed_checks_to_alert_at,
-                        )
+                        ),
                     )
             else:
                 self.consecutive_failed_checks = 0
@@ -333,10 +318,7 @@ if __name__ == "__main__":
     print("Minutes of logs to inspect: %s" % MINUTES_OF_LOGS_TO_INSPECT)
 
     if args.daemon_mode:
-        print(
-            "Daemon mode activated. Will perform checks every %s seconds."
-            % DAEMON_MODE_CHECK_FREQUENCY_SECONDS
-        )
+        print("Daemon mode activated. Will perform checks every %s seconds." % DAEMON_MODE_CHECK_FREQUENCY_SECONDS)
         while True:
             try:
                 ls.perform_check(args)
