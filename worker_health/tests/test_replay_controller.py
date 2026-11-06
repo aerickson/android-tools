@@ -1,6 +1,6 @@
 import json
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,7 +13,7 @@ from worker_health import replay_controller as controller
 
 SOURCE = "releng-hardware/source"
 DESTINATION = "releng-hardware/destination"
-NOW = datetime(2026, 11, 5, 18, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 5, 18, tzinfo=UTC)
 
 
 def rest_error(code):
@@ -58,6 +58,7 @@ def setup(mocker, tmp_path):
         failure_backoff=300,
         submit_interval=60,
         dry_run=False,
+        submissions_enabled=True,
     )
     mocker.patch.object(controller, "load_discovery", return_value=Discovery(jobs, 1, 3, 3, 0))
     mocker.patch.object(controller, "save_discovery")
@@ -406,6 +407,7 @@ def test_queued_elapsed_and_missing_run_start(setup, state, expected):
 
 
 def test_cli_once_dry_run(mocker, tmp_path, capsys):
+    mocker.patch("worker_health.replay_sessions.sessions_root", return_value=tmp_path / "sessions")
     mocker.patch(
         "sys.argv",
         [
@@ -525,7 +527,8 @@ def test_pause_does_not_rerun_covered_types_while_uncovered_type_in_backoff(setu
 @pytest.mark.parametrize("condition", ["empty", "denied", "unavailable", "partial"])
 def test_uncertain_or_empty_coverage_does_not_exit(setup, condition):
     instance, jobs = setup
-    cover_jobs(instance, jobs)
+    if condition != "empty":
+        cover_jobs(instance, jobs)
     instance.args.exit_on_full_coverage = True
     if condition == "empty":
         jobs.clear()
@@ -582,6 +585,7 @@ def test_report_failure_returns_nonzero(setup, mocker, tmp_path):
     from rich.console import Console
 
     instance, _ = setup
+    mocker.patch.object(cli, "state_path", return_value=tmp_path / "report-failure.sqlite3")
     instance.args.report = str(tmp_path / "missing" / "report.json")
     assert cli.run_controller(instance.args, Console()) == 1
 
@@ -594,3 +598,119 @@ def test_cli_coverage_defaults_and_overrides(mocker):
     mocker.patch("sys.argv", command + ["--no-stop-on-full-coverage", "--exit-on-full-coverage"])
     args = cli.parse_args()
     assert not args.stop_on_full_coverage and args.exit_on_full_coverage
+
+
+def test_disappeared_types_stay_in_session_after_restart(setup):
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    instance.tick()
+    original_key = controller.workload_key(SOURCE, jobs[0])
+    jobs.pop(0)
+    instance.clock = lambda: NOW + timedelta(minutes=10)
+    instance.tick()
+    snapshot = instance.snapshot()
+    assert snapshot["passed"] == snapshot["eligible"] == 3
+    historical = next(row for row in snapshot["rows"] if row["key"] == original_key)
+    assert historical["coverage"] == "passed"
+    assert historical["status"] == "history only" and not historical["source_present"]
+    resumed = controller.ReplayController(
+        instance.queue,
+        instance.manager,
+        instance.auth,
+        instance.state,
+        instance.args,
+        clock=instance.clock,
+    )
+    resumed.tick()
+    row = next(row for row in resumed.report()["rows"] if row["key"] == original_key)
+    assert row["source_task_id"] == "0" * 22
+    assert row["successes"] == 1
+    instance.queue.createTask.assert_not_called()
+
+
+def test_disappeared_untested_type_cannot_make_coverage_complete(setup):
+    instance, jobs = setup
+    instance.args.submissions_enabled = False
+    instance.tick()
+    cover_jobs(instance, jobs[:2])
+    missing = jobs.pop()
+    instance.clock = lambda: NOW + timedelta(minutes=10)
+    instance.args.exit_on_full_coverage = True
+    instance.tick()
+    assert instance.snapshot()["eligible"] == 3
+    assert not instance.exit_ready
+    assert any(row["name"] == missing.name and row["status"] == "history only" for row in instance.snapshot()["rows"])
+    instance.queue.createTask.assert_not_called()
+
+
+def test_monitoring_reconciles_existing_work_but_never_submits(setup):
+    instance, _ = setup
+    instance.tick()
+    instance.args.submissions_enabled = False
+    instance.clock = lambda: NOW + timedelta(minutes=1)
+    instance.queue.status.return_value = {"status": {"state": "completed"}}
+    instance.tick()
+    assert instance.queue.createTask.call_count == 1
+    assert instance.snapshot()["passed"] == 1
+    assert not instance.state.active()
+
+
+def test_submissions_require_explicit_enablement(setup):
+    instance, _ = setup
+    del instance.args.submissions_enabled
+    instance.tick()
+    instance.queue.createTask.assert_not_called()
+    assert not instance.snapshot()["submissions_enabled"]
+
+
+def test_resume_keeps_saved_rows_visible_during_initial_scan(setup, mocker):
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    instance.tick()
+    saved = instance.report()
+    instance.args.session_info = SimpleNamespace(report=lambda: saved)
+    resumed = controller.ReplayController(
+        instance.queue,
+        instance.manager,
+        instance.auth,
+        instance.state,
+        instance.args,
+        clock=lambda: NOW,
+    )
+    during_scan = []
+    mocker.patch.object(controller, "load_discovery", return_value=None)
+
+    def discover(*args, **kwargs):
+        resumed.progress("Reading source worker histories")
+        during_scan.append(resumed.snapshot())
+        assert resumed.report()["passed"] == 3
+        return Discovery(jobs, 1, 3, 3, 0)
+
+    mocker.patch.object(controller, "discover_jobs", side_effect=discover)
+    assert resumed.snapshot()["passed"] == 3
+    assert len(resumed.snapshot()["rows"]) == 3
+    resumed.tick()
+    assert during_scan[0]["refreshing"]
+    assert during_scan[0]["passed"] == 3
+    assert "showing saved results" in during_scan[0]["message"]
+    assert not during_scan[0]["full_coverage"]
+    assert not resumed.snapshot().get("refreshing", False)
+    assert resumed.snapshot()["passed"] == 3
+
+
+def test_pausing_during_preflight_prevents_reservation(setup):
+    instance, _ = setup
+    controller.check_inputs.side_effect = lambda *args, **kwargs: setattr(instance.args, "submissions_enabled", False)
+    instance.tick()
+    assert not instance.state.active()
+    instance.queue.createTask.assert_not_called()
+
+
+def test_destination_lock_is_shared_across_session_databases(tmp_path):
+    lock = tmp_path / "destination.lock"
+    with (
+        controller.ControllerState(tmp_path / "first.sqlite3", lock_path=lock),
+        pytest.raises(ValueError, match="Another replay controller"),
+        controller.ControllerState(tmp_path / "second.sqlite3", lock_path=lock),
+    ):
+        pass

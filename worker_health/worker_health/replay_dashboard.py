@@ -134,7 +134,19 @@ class Dashboard:
                     if getattr(self.args, "replay_wake", None):
                         self.args.replay_wake.set()
                     return
-                if key in (ord("f"), ord("F"), ord("e"), ord("E")):
+                viewing = getattr(self.args, "view_only", False)
+                if viewing and key in (ord("r"), ord("R")):
+                    self.args.resume_requested = True
+                    return
+                if not viewing and key in (ord("s"), ord("S")):
+                    self.args.submissions_enabled = not getattr(self.args, "submissions_enabled", False)
+                    logging.getLogger(__name__).info(
+                        "Submissions %s",
+                        "enabled" if self.args.submissions_enabled else "paused",
+                    )
+                    if getattr(self.args, "replay_wake", None):
+                        self.args.replay_wake.set()
+                if not viewing and key in (ord("f"), ord("F"), ord("e"), ord("E")):
                     setting = "stop_on_full_coverage" if key in (ord("f"), ord("F")) else "exit_on_full_coverage"
                     setattr(self.args, setting, not getattr(self.args, setting, setting == "stop_on_full_coverage"))
                     logging.getLogger(__name__).info("%s: %s", setting, getattr(self.args, setting))
@@ -170,7 +182,7 @@ class Dashboard:
     @staticmethod
     def dimensions(height, _width):
         log_lines = min(8, max(3, (height - 8) // 3))
-        return max(1, height - log_lines - 9), log_lines
+        return max(1, height - log_lines - 11), log_lines
 
     def draw(self, screen):
         screen.erase()
@@ -218,7 +230,11 @@ class Dashboard:
             if key == self.tasks.selected:
                 style |= curses.A_REVERSE if self.focus == 0 else curses.A_BOLD
             elapsed = row["elapsed"]
-            if row["status"] in ("running", "queued", "waiting", "uncertain") and elapsed not in ("-", "unknown"):
+            if (
+                not getattr(self.args, "view_only", False)
+                and row["status"] in ("running", "queued", "waiting", "uncertain")
+                and elapsed not in ("-", "unknown")
+            ):
                 hours, minutes, seconds = map(int, elapsed.split(":"))
                 elapsed = format_elapsed(
                     hours * 3600 + minutes * 60 + seconds + max(0, time.time() - row["observed_at"]),
@@ -249,14 +265,27 @@ class Dashboard:
             line(y, f"{'›' if sequence == self.log_cursor.selected else ' '} {text}", style)
         pause = "on" if getattr(self.args, "stop_on_full_coverage", True) else "off"
         exiting = "on" if getattr(self.args, "exit_on_full_coverage", False) else "off"
+        viewing = getattr(self.args, "view_only", False)
+        line(height - 6, f"Session: {getattr(self.args, 'session', '-')}", curses.A_DIM)
+        line(height - 5, getattr(self.args, "session_warning", ""), self.colors.get(4, 0) | curses.A_BOLD)
+        submissions = "on" if getattr(self.args, "submissions_enabled", False) else "off"
         line(
             height - 4,
-            f"F: Pause when covered [{pause}] | E: Exit when covered [{exiting}] | "
-            f"{'PAUSED' if snapshot.get('paused') else 'Scheduling'}",
+            (
+                f"VIEW ONLY — saved sample: {snapshot.get('sampled_at') or 'never'} | R: resume monitoring"
+                if viewing
+                else f"S: Submit [{submissions}] | F: Pause covered [{pause}] | E: Exit covered [{exiting}] | "
+                f"{'PAUSED' if snapshot.get('paused') or submissions == 'off' else 'Scheduling'}"
+            ),
             curses.A_BOLD,
         )
         line(height - 3, snapshot.get("message", "Starting"), self.colors.get(3, 0))
-        line(height - 2, f"Report: {getattr(self.args, 'report', None) or 'initializing'}", curses.A_DIM)
+        report_path = (
+            self.args.session_info.report_path
+            if getattr(self.args, "session_info", None)
+            else getattr(self.args, "report", None) or "initializing"
+        )
+        line(height - 2, f"Report: {report_path}", curses.A_DIM)
         line(height - 1, "Tab: pane | ↑/↓: row | PgUp/← PgDn/→: screen | Home/End | Q/Ctrl+C: stop", curses.A_DIM)
         screen.refresh()
 

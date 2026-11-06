@@ -179,9 +179,35 @@ pipenv run python ./replay_tc_pool.py \
   --queue releng-hardware/gecko-t-linux-talos-2404-tc-v115
 ```
 
-The command submits tasks without an interactive confirmation. To inspect one
-scheduling cycle without submitting, add `--dry-run --once`. Both modes read
-`~/.tc_token` and check the client's current effective scopes.
+With no arguments, the tool opens a local session picker. Sessions are sorted
+by last successful sample, newest first; the newest is highlighted. Sessions
+started 7+ days ago and those not sampled for 7+ days have separate warnings.
+Enter views a saved snapshot, R resumes monitoring, and N creates a new session
+(using the selected pools as editable defaults).
+
+| Arguments | Behavior |
+| --- | --- |
+| `--from-pool SRC --queue DST` | View the latest matching session, or create a new monitoring session if none exists |
+| `--session PATH` | View a saved session offline, with no scans, credentials, SQLite writes, or report updates |
+| `--session PATH --resume` | Resume monitoring and update that session, with submissions paused |
+| Pool arguments plus `--resume` | Resume the latest matching session; error if none exists |
+| Pool arguments plus `--new-session` | Start fresh coverage, preserving all previous sessions |
+| Add `--submit-on-start` to a new/resumed session | Enable submissions immediately |
+
+Supplying `--submit-on-start` while viewing is an error; explicitly resume or
+start a new session. Monitoring continues with submissions paused until S is
+pressed in the dashboard or `--submit-on-start` is supplied. Active monitoring
+reads `~/.tc_token`; viewing does not. Use `--resume --dry-run --once` with an
+existing session to validate a scheduling cycle without submitting.
+
+Sessions are stored under `$XDG_STATE_HOME/worker-health/replay-sessions`
+(default: `~/.local/state/worker-health/replay-sessions`). Each directory is
+named with its UTC start timestamp, sanitized source and destination pool names,
+and a unique suffix, and contains `session.json`, private `state.sqlite3`, and
+`report.json`. On exit, the tool prints the report path and exact resume command.
+Resuming keeps the original session start time; a new invocation alone never
+enables submissions. Old per-destination controller databases are left intact
+and are not automatically imported into fresh sessions.
 
 Defaults count non-quarantined destination workers active within 90 minutes and
 allow one outstanding task per worker. Standalone workers count as one even
@@ -199,12 +225,19 @@ with `--worker-active-minutes`, `--tasks-per-worker`, `--poll-interval`, and
 Source history is refreshed every 10 minutes (`--source-refresh-minutes`). As
 with the interactive picker, discovery groups workload types by name and scopes,
 uses their latest completed source tasks, and sees bounded recent worker
-history. Types without a successful controller replay are prioritized; ties
+history. Every discovered type is retained for the lifetime of its session,
+including across restarts. Types absent from the latest scan show `history only`
+when idle; they retain their coverage and remain in the totals. Only types in
+the current scan are candidates for new replays. An untested type disappearing
+does not make coverage complete. Start a new session for a fresh workload set;
+there is no rolling expiration of types within a session.
+
+Types without a successful session replay are prioritized; ties
 rotate by fewest attempts and oldest attempt, with equally ranked types shuffled
 for variety in the initial sweep. A type has at most one controller
 replay in flight. By default, covered types are not replayed again: once all
 eligible types have succeeded, submissions pause while monitoring and discovery
-continue. Newly discovered uncovered name/scope variants resume scheduling;
+continue. With submissions enabled, newly discovered uncovered name/scope variants resume scheduling;
 new source tasks for an already-covered type do not. Use
 `--no-stop-on-full-coverage` for continuous rotation, or
 `--exit-on-full-coverage` to exit successfully at the first confirmed full
@@ -231,6 +264,9 @@ Both pane headers show the visible row range and total, with `↑ earlier` and
 `↓ more` when content is offscreen. Log positions refer to the retained buffer.
 
 - Tab switches between task and log panes; the focused pane is highlighted.
+- In view mode, R resumes monitoring; load controls are disabled and elapsed
+  times remain frozen at the saved sample.
+- In active monitoring, S toggles submissions (default off on every launch).
 - F toggles pause-when-covered (default on); E independently toggles
   exit-when-covered (default off). Changes wake the scheduler; they take effect
   at its next coverage check. The settings remain visible in the dashboard.
@@ -248,28 +284,30 @@ print a regular table; `--output log` keeps plain logging for unattended runs.
 
 A bold green `★ Full coverage: N/N eligible types` marks confirmed coverage;
 `0/0` and incomplete discovery do not count as complete. Coverage means observed
-successful controller replays across restarts, not coverage of every worker or
-a newly deployed image. Discovery sees bounded recent source history.
+successful session replays across restarts, not coverage of every worker or
+a newly deployed image. The denominator includes every eligible type observed
+during this session, even those absent from the current bounded source history.
 
-Every invocation writes a JSON report to a unique `/tmp/replay-tc-pool-*.json`
-file; use `--report PATH` to select a persistent location. The path is shown at
-startup, in the dashboard, and on exit. Reports update atomically after each
-cycle and on clean exit, including incomplete runs. They include coverage and
+Active sessions update their canonical `report.json`; `--report PATH` also
+writes a copy at the requested location. In view mode it exports the saved
+snapshot without changing the original. The path is shown at startup, in the
+dashboard, and on exit. Reports update atomically after each active cycle and
+on clean exit, including incomplete runs. `sampled_at` records the last successful
+monitoring cycle; simply viewing, saving, or failing a cycle does not advance it.
+Reports include coverage and
 discovery details, settings, exclusions and missing scopes, per-workload
 attempts/successes/failures, task links, outstanding work, and an exit reason.
 Task entries distinguish existing tasks from submissions during this invocation.
 Credentials and replay task definitions are omitted. Report write failures are
 reported as errors. See the [coverage design notes](docs/REPLAY_COVERAGE_PLAN.md).
 
-Per-destination state is stored under
-`$XDG_STATE_HOME/worker-health/replay-controller` (default:
-`~/.local/state/worker-health/replay-controller`). It preserves controller
-coverage, backoff, rate limits, and in-flight work across restarts. Coverage
+Each session's SQLite state preserves coverage, backoff, rate limits, workload
+identities, source task IDs, and in-flight work across restarts. Coverage
 counts this controller's tasks, not historical replays submitted by other tools.
 Submissions are also recorded in the interactive picker's coverage database.
 Private state files retain exact replay definitions so an uncertain submission
 can be retried with the same task ID rather than creating a duplicate. A local
-lock prevents two controllers sharing this state from targeting the same pool;
+destination lock prevents controllers in different sessions from targeting the same pool;
 run only one controller per destination, including across machines.
 
 ### replay_tc_task.py

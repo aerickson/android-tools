@@ -8,7 +8,7 @@ import os
 import random
 import sqlite3
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import taskcluster
@@ -26,7 +26,7 @@ from rich.text import Text
 
 from worker_health.replay_cache import load_discovery, save_discovery
 from worker_health.replay_coverage import remember_results, remember_submission
-from worker_health.replay_picker import discover_jobs, missing_scopes
+from worker_health.replay_picker import ReplayJob, discover_jobs, missing_scopes
 
 ACTIVE = ("reserved", "pending", "running", "unscheduled")
 TERMINAL = ("completed", "failed", "exception")
@@ -75,14 +75,16 @@ def active_worker_count(manager, pool, now, minutes):
 class ControllerState:
     """One local controller per destination; commit submission intent before the API call."""
 
-    def __init__(self, path):
+    def __init__(self, path, lock_path=None):
         self.path = Path(path)
+        self.lock_path = Path(lock_path) if lock_path else Path(str(self.path) + ".lock")
         self.db = None
         self.lock = None
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        self.lock = os.fdopen(os.open(str(self.path) + ".lock", os.O_CREAT | os.O_RDWR, 0o600), "w")
+        self.lock_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        self.lock = os.fdopen(os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600), "w")
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
@@ -106,6 +108,12 @@ class ControllerState:
                 );
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL NOT NULL);
             """)
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(workloads)")}
+            if "source_task_id" not in columns:
+                self.db.execute("ALTER TABLE workloads ADD COLUMN source_task_id TEXT")
+            if "last_seen" not in columns:
+                self.db.execute("ALTER TABLE workloads ADD COLUMN last_seen TEXT")
+            self.db.commit()
             return self
         except Exception:
             self.__exit__(None, None, None)
@@ -117,9 +125,15 @@ class ControllerState:
         if self.lock:
             self.lock.close()
 
-    def ensure_job(self, key, name):
+    def ensure_job(self, key, name, source_task_id=None, last_seen=None):
         with self.db:
-            self.db.execute("INSERT OR IGNORE INTO workloads (key, name) VALUES (?, ?)", (key, name))
+            self.db.execute(
+                """INSERT INTO workloads (key, name, source_task_id, last_seen) VALUES (?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    source_task_id=COALESCE(excluded.source_task_id, workloads.source_task_id),
+                    last_seen=COALESCE(excluded.last_seen, workloads.last_seen)""",
+                (key, name, source_task_id, last_seen),
+            )
 
     def history(self, key):
         return self.db.execute("SELECT * FROM workloads WHERE key=?", (key,)).fetchone()
@@ -169,11 +183,12 @@ class ReplayController:
     def __init__(self, queue, manager, auth, state, args, clock=None, stop_requested=None):
         self.queue, self.manager, self.auth, self.state, self.args = queue, manager, auth, state, args
         self.jobs = []
+        self.known_jobs = {}
         self.granted = []
         self.last_discovery = None
         self.workers = self.outstanding = self.limit = 0
         self.message = "Starting"
-        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.clock = clock or (lambda: datetime.now(UTC))
         self.histories = {}
         self.active_types = set()
         self.active_tasks = {}
@@ -185,6 +200,10 @@ class ReplayController:
         self.paused = False
         self.exit_ready = False
         self.initial_task_ids = {row[0] for row in self.state.db.execute("SELECT task_id FROM tasks")}
+        session = getattr(args, "session_info", None)
+        self.saved_snapshot = session.report() if session else {}
+        self.view_ready = False
+        self.refresh_view()
 
     def coverage_state(self):
         passed, eligible, _ = self.display_rows()
@@ -214,6 +233,18 @@ class ReplayController:
             for row in self.state.active()
         }
         self.active_types = set(self.active_tasks)
+        current = {workload_key(self.args.from_pool, job): job for job in self.jobs}
+        self.known_jobs = {}
+        for key, history in self.histories.items():
+            source, name, scopes = json.loads(key)
+            if source == self.args.from_pool:
+                self.known_jobs[key] = current.get(key) or ReplayJob(
+                    history.get("source_task_id"),
+                    {"metadata": {"name": name}, "scopes": scopes},
+                    "",
+                    None,
+                    "-",
+                )
 
     def progress(self, message):
         if self.stop_requested():
@@ -254,8 +285,8 @@ class ReplayController:
                 remember_results(self.args.queue, {row["task_id"]: {"state": state}})
 
     def submit(self, row, now):
-        if self.stop_requested():
-            self.message = "Stopped scheduling; submitted tasks keep running"
+        if self.stop_requested() or not getattr(self.args, "submissions_enabled", False):
+            self.message = "Submissions paused; submitted tasks keep running"
             return
         definition = json.loads(row["definition"])
         self.state.mark_submission(now.timestamp())
@@ -290,11 +321,12 @@ class ReplayController:
                 discovery = discover_jobs(self.queue, self.manager, self.args.from_pool, progress=self.progress)
                 save_discovery(self.args.from_pool, discovery)
             for job in discovery.jobs:
-                self.state.ensure_job(workload_key(self.args.from_pool, job), job.name)
+                self.state.ensure_job(workload_key(self.args.from_pool, job), job.name, job.task_id, now.isoformat())
             self.jobs = discovery.jobs
             self.discovery = discovery
             self.last_discovery = now
         self.refresh_view()
+        self.view_ready = True
         self.coverage_confirmed = (
             self.discovery is not None and self.discovery.complete and not self.discovery.unavailable_workers
         )
@@ -309,6 +341,9 @@ class ReplayController:
             return
         self.progress("Reading destination activity and queue counts")
         self.capacity(now)
+        if not getattr(self.args, "submissions_enabled", False) and not self.args.dry_run:
+            self.message = "Monitoring only; submissions paused (S to enable)"
+            return
         if not self.state.rate_ready(now.timestamp(), self.args.submit_interval):
             self.message = "Waiting for submission rate limit"
             return
@@ -395,8 +430,10 @@ class ReplayController:
             if self.outstanding >= self.limit:
                 self.message = "Capacity changed during input validation; no task submitted"
                 return
-            if self.stop_requested():
-                self.message = "Stopped scheduling; submitted tasks keep running"
+            if self.stop_requested() or (
+                not getattr(self.args, "submissions_enabled", False) and not self.args.dry_run
+            ):
+                self.message = "Submissions paused; submitted tasks keep running"
                 return
             if self.args.dry_run:
                 self.message = f"DRY RUN: would submit {job.name}"
@@ -410,11 +447,29 @@ class ReplayController:
         self.message = "No eligible workload ready (permissions, in-flight work, or backoff)"
 
     def display_rows(self):
+        if not self.view_ready and self.saved_snapshot.get("rows"):
+            return (
+                self.saved_snapshot.get("passed", 0),
+                self.saved_snapshot.get("eligible", 0),
+                [
+                    (
+                        0,
+                        row["key"],
+                        Text(row["name"]),
+                        Text(row["coverage"]),
+                        str(row["successes"]),
+                        str(row["attempts"]),
+                        Text(row["status"]),
+                        Text(row["elapsed"]),
+                    )
+                    for row in self.saved_snapshot["rows"]
+                ],
+            )
         passed = eligible = 0
         now = self.clock().timestamp()
         rows = []
-        for job in self.jobs:
-            key = workload_key(self.args.from_pool, job)
+        current_keys = {workload_key(self.args.from_pool, job) for job in self.jobs}
+        for key, job in self.known_jobs.items():
             history = self.histories.get(key, {"successes": 0, "attempts": 0, "retry_after": 0})
             denied = missing_scopes(job.task, self.args.queue, self.granted)
             eligible += not denied
@@ -438,6 +493,8 @@ class ReplayController:
                     "in flight",
                 )
                 if key in self.active_types
+                else "history only"
+                if key not in current_keys
                 else f"retry in {max(0, int(history['retry_after'] - now))}s"
                 if history["retry_after"] > now
                 else "ready"
@@ -474,6 +531,19 @@ class ReplayController:
         return passed, eligible, rows
 
     def snapshot(self):
+        if not self.view_ready and self.saved_snapshot.get("rows"):
+            return {
+                **self.saved_snapshot,
+                "message": f"{self.message} — showing saved results until refresh completes",
+                "refreshing": True,
+                "coverage_confirmed": False,
+                "full_coverage": False,
+                "paused": not getattr(self.args, "submissions_enabled", False),
+                "submissions_enabled": getattr(self.args, "submissions_enabled", False),
+                "stop_on_full_coverage": getattr(self.args, "stop_on_full_coverage", True),
+                "exit_on_full_coverage": getattr(self.args, "exit_on_full_coverage", False),
+                "report_path": getattr(self.args, "report", None),
+            }
         passed, eligible, rows = self.display_rows()
         return {
             "workers": self.workers,
@@ -481,10 +551,11 @@ class ReplayController:
             "limit": self.limit,
             "passed": passed,
             "eligible": eligible,
-            "excluded": len(self.jobs) - eligible,
+            "excluded": len(self.known_jobs) - eligible,
             "full_coverage": self.coverage_state()[2],
             "coverage_confirmed": self.coverage_confirmed,
             "paused": self.paused,
+            "submissions_enabled": getattr(self.args, "submissions_enabled", False),
             "stop_on_full_coverage": getattr(self.args, "stop_on_full_coverage", True),
             "exit_on_full_coverage": getattr(self.args, "exit_on_full_coverage", False),
             "report_path": getattr(self.args, "report", None),
@@ -499,16 +570,20 @@ class ReplayController:
                     "status": status.plain,
                     "elapsed": elapsed.plain,
                     "observed_at": self.clock().timestamp(),
+                    "source_present": key in {workload_key(self.args.from_pool, job) for job in self.jobs},
+                    "last_seen": self.histories.get(key, {}).get("last_seen"),
                 }
                 for _, key, name, coverage, successes, attempts, status, elapsed in rows
             ],
         }
 
     def report(self):
+        if not self.view_ready and self.saved_snapshot.get("rows"):
+            return self.snapshot()
         data = self.snapshot()
         data["coverage_definition"] = (
-            "At least one observed successful controller replay per currently discovered eligible "
-            "name/scope variant; includes persisted successes, not worker-image or per-worker coverage. "
+            "At least one observed successful replay per eligible name/scope variant observed during this session; "
+            "includes session successes across restarts, not worker-image or per-worker coverage. "
             "Discovery uses bounded recent source history."
         )
         data["discovery"] = {
@@ -526,13 +601,17 @@ class ReplayController:
             task["url"] = f"https://firefox-ci-tc.services.mozilla.com/tasks/{task['task_id']}"
             task["this_invocation"] = task["task_id"] not in getattr(self, "initial_task_ids", set())
             tasks.setdefault(task["workload"], []).append(task)
-        jobs = {workload_key(self.args.from_pool, job): job for job in self.jobs}
+        jobs = self.known_jobs
         for row in data["rows"]:
             history = self.histories.get(row["key"], {})
             denied = missing_scopes(jobs[row["key"]].task, self.args.queue, self.granted)
             row.update(
                 source_task_id=jobs[row["key"]].task_id,
-                source_url=f"https://firefox-ci-tc.services.mozilla.com/tasks/{jobs[row['key']].task_id}",
+                source_url=(
+                    f"https://firefox-ci-tc.services.mozilla.com/tasks/{jobs[row['key']].task_id}"
+                    if jobs[row["key"]].task_id
+                    else None
+                ),
                 eligible=not denied,
                 missing_scopes=denied,
                 attempts=int(row["attempts"]),
@@ -565,7 +644,7 @@ class ReplayController:
             Text(
                 f"Active workers: {self.workers} | Outstanding: {self.outstanding}/{self.limit} | "
                 f"{'★ Full coverage' if full else 'Coverage'}: {passed}/{eligible} eligible types | "
-                f"{len(self.jobs) - eligible} excluded",
+                f"{len(self.known_jobs) - eligible} excluded",
                 style="bold green" if full else "",
             ),
             Text(

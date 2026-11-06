@@ -1,11 +1,10 @@
 """Atomic, credential-free coverage report output."""
 
-import json
-import re
-import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
+from worker_health.replay_sessions import create_session, write_json
 
 
 class ReplayReport:
@@ -13,36 +12,37 @@ class ReplayReport:
         self.lock = threading.Lock()
         self.finished = False
         self.latest = {}
-        self.started_at = datetime.now(timezone.utc).isoformat()
-        if args.report:
-            self.path = Path(args.report).expanduser().absolute()
+        invocation_started = datetime.now(UTC).isoformat()
+        session = getattr(args, "session_info", None)
+        if session is None and not args.report:
+            session = create_session(args.from_pool, args.queue)
+            args.session_info = session
+        self.copy_path = None
+        if session:
+            self.path = session.report_path
+            self.latest = session.report()
+            if args.report and Path(args.report).expanduser().absolute() != self.path:
+                self.copy_path = Path(args.report).expanduser().absolute()
         else:
-            destination = re.sub(r"[^a-zA-Z0-9_.-]", "-", args.queue)
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            with tempfile.NamedTemporaryFile(
-                prefix=f"replay-tc-pool-{destination}-{stamp}-",
-                suffix=".json",
-                dir="/tmp",
-                delete=False,
-            ) as output:
-                self.path = Path(output.name)
+            self.path = Path(args.report).expanduser().absolute()
+        self.started_at = session.started_at if session else invocation_started
         args.report = str(self.path)
         self.base = {
             "version": 1,
             "source_pool": args.from_pool,
             "destination_pool": args.queue,
             "started_at": self.started_at,
+            "invocation_started_at": invocation_started,
             "stop_on_full_coverage": getattr(args, "stop_on_full_coverage", True),
             "exit_on_full_coverage": getattr(args, "exit_on_full_coverage", False),
         }
-        self.write({"full_coverage": False, "message": "Starting"})
+        self.write({**self.latest, **self.base, "message": "Starting monitoring"})
 
     def write(self, data, exit_reason=None):
         with self.lock:
             if self.finished:
                 return
-            self._write(data, exit_reason)
-            self.latest = data
+            self.latest = self._write(data, exit_reason)
             self.finished = exit_reason is not None
 
     def finish(self, reason):
@@ -56,16 +56,12 @@ class ReplayReport:
         report = {
             **self.base,
             **data,
-            "reported_at": datetime.now(timezone.utc).isoformat(),
+            "reported_at": datetime.now(UTC).isoformat(),
+            "invocation_started_at": self.base["invocation_started_at"],
+            "sampled_at": data.get("sampled_at", self.latest.get("sampled_at")),
             "exit_reason": exit_reason,
         }
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent, delete=False) as output:
-                temporary = Path(output.name)
-                json.dump(report, output, indent=2, ensure_ascii=False)
-                output.write("\n")
-            temporary.replace(self.path)
-        finally:
-            if temporary:
-                temporary.unlink(missing_ok=True)
+        write_json(self.path, report)
+        if self.copy_path:
+            write_json(self.copy_path, report)
+        return report

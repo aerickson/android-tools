@@ -6,14 +6,15 @@ import pytest
 from worker_health.replay_report import ReplayReport
 
 
-def test_default_report_unique_under_tmp():
+def test_default_report_in_unique_persistent_session(tmp_path, mocker):
+    mocker.patch("worker_health.replay_sessions.sessions_root", return_value=tmp_path / "sessions")
     paths = []
     try:
         for _ in range(2):
             args = SimpleNamespace(report=None, from_pool="source/pool", queue="target/pool")
             report = ReplayReport(args)
             paths.append(report.path)
-            assert report.path.parent == Path("/tmp")
+            assert report.path.parent.parent == tmp_path / "sessions"
             assert args.report == str(report.path)
             assert not json.loads(report.path.read_text())["full_coverage"]
         assert paths[0] != paths[1]

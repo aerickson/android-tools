@@ -192,3 +192,42 @@ def test_quit_finalizes_report_while_api_is_busy(mocker, tmp_path):
         release.set()
         assert finished.wait(2)
     assert json.loads((tmp_path / "report.json").read_text()) == report
+
+
+def test_view_mode_blocks_load_controls_and_requires_resume(mocker):
+    args = SimpleNamespace(
+        from_pool="source/pool",
+        queue="target/pool",
+        view_only=True,
+        submissions_enabled=False,
+        stop_on_full_coverage=True,
+        exit_on_full_coverage=False,
+    )
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 120)
+    screen.getch.side_effect = [ord("s"), ord("f"), ord("e"), ord("r")]
+    view.screen(screen)
+    assert args.resume_requested
+    assert not args.submissions_enabled
+    assert args.stop_on_full_coverage and not args.exit_on_full_coverage
+
+
+def test_submit_key_enables_active_monitoring(mocker):
+    args = SimpleNamespace(
+        from_pool="source/pool",
+        queue="target/pool",
+        view_only=False,
+        submissions_enabled=False,
+        replay_wake=threading.Event(),
+    )
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 120)
+    screen.getch.side_effect = [ord("s"), ord("q")]
+    view.screen(screen)
+    assert args.submissions_enabled and args.replay_wake.is_set()
