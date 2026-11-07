@@ -135,6 +135,12 @@ class Dashboard:
                 ):
                     curses.init_pair(number, color, -1)
                     self.colors[number] = curses.color_pair(number)
+                for number, foreground, background in (
+                    (5, curses.COLOR_BLACK, curses.COLOR_CYAN),
+                    (6, curses.COLOR_BLACK, curses.COLOR_YELLOW),
+                ):
+                    curses.init_pair(number, foreground, background)
+                    self.colors[number] = curses.color_pair(number)
         except curses.error:
             pass
         while True:
@@ -324,9 +330,6 @@ class Dashboard:
             if sequence == self.log_cursor.selected and self.focus == 1:
                 style |= curses.A_REVERSE
             line(y, f"{'›' if sequence == self.log_cursor.selected else ' '} {text}", style)
-        pause = "on" if getattr(self.args, "stop_on_full_coverage", True) else "off"
-        exiting = "on" if getattr(self.args, "exit_on_full_coverage", False) else "off"
-        viewing = getattr(self.args, "view_only", False)
         line(height - 6, f"Session: {getattr(self.args, 'session', '-')}", curses.A_DIM)
         selected_status = by_key.get(self.tasks.selected, {}).get("status", "") if self.focus == 0 else ""
         detail = selected_status if len(selected_status) > 12 else ""
@@ -335,17 +338,7 @@ class Dashboard:
             getattr(self.args, "session_warning", "") or detail,
             self.colors.get(4, 0) | curses.A_BOLD,
         )
-        submissions = "on" if getattr(self.args, "submissions_enabled", False) else "off"
-        line(
-            height - 4,
-            (
-                f"VIEW ONLY — saved sample: {snapshot.get('sampled_at') or 'never'} | R: resume monitoring"
-                if viewing
-                else f"S: Submit [{submissions}] | F: Pause covered [{pause}] | E: Exit covered [{exiting}] | "
-                f"{'PAUSED' if snapshot.get('paused') or submissions == 'off' else 'Scheduling'}"
-            ),
-            curses.A_BOLD,
-        )
+        self.draw_action_bar(screen, snapshot, height - 4, width)
         blocked = self.permissions(snapshot)["blocked_count"]
         message = snapshot.get("message", "Starting")
         if blocked:
@@ -359,6 +352,39 @@ class Dashboard:
         line(height - 2, f"Report: {report_path}", curses.A_DIM)
         line(height - 1, "P: permissions | Tab: pane | ↑/↓: row | PgUp/PgDn | Home/End | Q/Ctrl+C: stop", curses.A_DIM)
         screen.refresh()
+
+    def draw_action_bar(self, screen, snapshot, y, width):
+        viewing = getattr(self.args, "view_only", False)
+        style = self.colors.get(6 if viewing else 5, curses.A_REVERSE)
+        if viewing:
+            segments = [
+                ("VIEW ONLY | R: Resume monitoring", True),
+                (f" | Saved sample: {snapshot.get('sampled_at') or 'never'}", False),
+            ]
+        else:
+            enabled = getattr(self.args, "submissions_enabled", False)
+            settings = (
+                ("S: Submit", enabled),
+                ("F: Pause covered" if width >= 110 else "F: Pause", getattr(self.args, "stop_on_full_coverage", True)),
+                ("E: Exit covered" if width >= 110 else "E: Exit", getattr(self.args, "exit_on_full_coverage", False)),
+            )
+            segments = []
+            for label, on in settings:
+                if segments:
+                    segments.append((" | ", False))
+                segments.append((f"{label} [{'on' if on else 'off'}]", on))
+            segments.append((f" | SUBMISSIONS {'ENABLED' if enabled else 'PAUSED'}", True))
+        try:
+            screen.addnstr(y, 0, " " * width, width, style)
+            x = 1
+            for text, bold in segments:
+                remaining = width - x - 1
+                if remaining <= 0:
+                    break
+                screen.addnstr(y, x, text, remaining, style | (curses.A_BOLD if bold else 0))
+                x += len(text)
+        except curses.error:
+            pass
 
     def permissions(self, snapshot):
         return snapshot.get("permissions") or permission_summary(snapshot.get("rows", []), self.args.queue)

@@ -290,6 +290,10 @@ Both pane headers show the visible row range and total, with `↑ earlier` and
 - In view mode, R resumes monitoring; load controls are disabled and elapsed
   times remain frozen at the saved sample.
 - In active monitoring, S toggles submissions (default off on every launch).
+  The action bar uses black text on cyan during live monitoring and black on
+  yellow in view-only mode, with reverse video on terminals without color.
+  Enabled settings are bold; the bar explicitly labels submissions as enabled
+  or paused. View-only mode puts R: Resume monitoring before the saved timestamp.
 - F toggles pause-when-covered (default on); E independently toggles
   exit-when-covered (default off). Changes wake the scheduler; they take effect
   at its next coverage check. The settings remain visible in the dashboard.
