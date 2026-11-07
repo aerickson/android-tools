@@ -595,10 +595,12 @@ def test_runner_exits_with_final_report_without_submitting(setup, mocker, tmp_pa
     mocker.patch.object(cli.taskcluster, "Auth", return_value=instance.auth)
     mocker.patch.object(cli, "ControllerState").return_value.__enter__.return_value = instance.state
     mocker.patch.object(cli, "ReplayController", return_value=instance)
-    assert cli.run_controller(instance.args, Console()) == 0
+    published = []
+    assert cli.run_controller(instance.args, Console(), publish=published.append) == 0
     report = json.loads((tmp_path / "final.json").read_text())
     assert report["exit_reason"] == "full_coverage"
     assert report["full_coverage"] and report["passed"] == 3
+    assert published[-1]["sampled_at"] == report["sampled_at"]
     instance.queue.createTask.assert_not_called()
 
 

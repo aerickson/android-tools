@@ -242,6 +242,7 @@ def run_controller(args, console, stop=None, publish=None):
                     data = controller.report()
                     if not failed:
                         data["sampled_at"] = datetime.now(UTC).isoformat()
+                        controller.sampled_at = data["sampled_at"]
                     report.write(data)
                     if session:
                         args.session_warning = " | ".join(session.warnings())
@@ -249,6 +250,15 @@ def run_controller(args, console, stop=None, publish=None):
                         publish(controller.snapshot())
                     elif args.output == "table":
                         console.print(controller.render())
+                    summary = (
+                        controller.workers,
+                        controller.outstanding,
+                        controller.limit,
+                        data["passed"],
+                        data["eligible"],
+                        data["excluded"],
+                        controller.message,
+                    )
                     logger.info(
                         "Workers=%s outstanding=%s/%s | Coverage=%s/%s (%s excluded) | %s",
                         controller.workers,
@@ -258,6 +268,7 @@ def run_controller(args, console, stop=None, publish=None):
                         data["eligible"],
                         data["excluded"],
                         controller.message,
+                        extra={"replay_summary": summary},
                     )
                     if not failed and controller.exit_ready:
                         reason = "full_coverage"

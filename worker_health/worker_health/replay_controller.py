@@ -224,6 +224,7 @@ class ReplayController:
         self.initial_task_ids = {row[0] for row in self.state.db.execute("SELECT task_id FROM tasks")}
         session = getattr(args, "session_info", None)
         self.saved_snapshot = session.report() if session else {}
+        self.sampled_at = self.saved_snapshot.get("sampled_at")
         self.view_ready = False
         self.refresh_view()
 
@@ -605,6 +606,7 @@ class ReplayController:
         passed, eligible, rows = self.display_rows()
         data = {
             "workers": self.workers,
+            "sampled_at": self.sampled_at,
             "outstanding": self.outstanding,
             "limit": self.limit,
             "passed": passed,

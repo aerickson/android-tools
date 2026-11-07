@@ -311,6 +311,14 @@ Both pane headers show the visible row range and total, with `↑ earlier` and
 - Logs follow new messages until you scroll back. Scrolling down to the newest
   line resumes following; End jumps there immediately and resumes following.
   A new lines counter shows arrivals while paused. The log buffer retains 2,000 lines.
+  Repeated unchanged summary lines are reduced to a 10-minute heartbeat in the
+  TUI; changes to the summary stats or scheduling state appear immediately.
+  Plain-log output still records every monitoring cycle (every minute by default).
+- A subtle cyan spinner beside MONITORING shows that the dashboard is alive,
+  including while submissions are paused or capacity is full. It does not mean
+  an API call or task is progressing. Last check shows the most recent successful
+  monitoring cycle; failed cycles leave that timestamp unchanged. View-only
+  mode is static. These indicators do not add log entries.
 - Q or Ctrl+C exits and restores the terminal. Submitted tasks keep running;
   an already-issued API request may complete after exit.
 

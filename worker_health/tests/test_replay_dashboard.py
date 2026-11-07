@@ -1,4 +1,5 @@
 import curses
+import io
 import json
 import logging
 import threading
@@ -9,6 +10,45 @@ from worker_health.replay_dashboard import Dashboard, LogBuffer, PaneCursor, run
 from worker_health.replay_permissions import permission_summary
 from worker_health.replay_report import ReplayReport
 from worker_health.replay_sessions import ReplaySession
+
+
+def test_tui_summary_changes_and_heartbeat_keep_plain_logging_complete(mocker):
+    mocker.patch("worker_health.replay_dashboard.time.monotonic", side_effect=[0, 60, 120, 719, 720])
+    logs = LogBuffer()
+    output = io.StringIO()
+    logger = logging.getLogger("summary-test")
+    mocker.patch.object(logger, "level", logging.INFO)
+    mocker.patch.object(logger, "handlers", [logs, logging.StreamHandler(output)])
+    mocker.patch.object(logger, "propagate", False)
+    logger.info("waiting: 1 worker", extra={"replay_summary": (1, "waiting")})
+    logger.info("waiting: 1 worker", extra={"replay_summary": (1, "waiting")})
+    logger.info("waiting: 2 workers", extra={"replay_summary": (2, "waiting")})
+    logger.warning("API warning")
+    logger.info("waiting: 2 workers", extra={"replay_summary": (2, "waiting")})
+    logger.info("waiting: 2 workers", extra={"replay_summary": (2, "waiting")})
+    lines = [entry[2] for entry in logs.snapshot()]
+    assert len(lines) == 4
+    assert "1 worker" in lines[0]
+    assert "2 workers" in lines[1]
+    assert "API warning" in lines[2]
+    assert "2 workers" in lines[3]
+    assert len(output.getvalue().splitlines()) == 6
+
+
+def test_monitoring_spinner_does_not_advance_last_successful_check(mocker):
+    args = SimpleNamespace(from_pool="source/pool", queue="dest/pool", view_only=False)
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    clock = mocker.patch("worker_health.replay_dashboard.time.monotonic", return_value=0)
+    snapshot = {"sampled_at": "2026-11-07T08:40:43+00:00"}
+    initial = view.activity_label(snapshot)
+    clock.return_value = 0.5
+    assert view.activity_label(snapshot) != initial
+    assert view.activity_label(snapshot).endswith("Last check: 08:40:43 UTC")
+    args.view_only = True
+    saved = view.activity_label(snapshot)
+    clock.return_value = 100
+    assert view.activity_label(snapshot) == saved
+    assert saved.startswith("VIEW ONLY")
 
 
 def test_full_pool_names_and_compact_footer(mocker):

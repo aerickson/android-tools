@@ -6,6 +6,7 @@ import threading
 import time
 import webbrowser
 from collections import deque
+from datetime import UTC, datetime
 from pathlib import Path
 from textwrap import wrap
 
@@ -20,10 +21,19 @@ class LogBuffer(logging.Handler):
         super().__init__()
         self.lines = deque(maxlen=limit)
         self.sequence = 0
+        self.last_summary = None
+        self.last_summary_at = None
         self.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S"))
 
     def emit(self, record):
         # Handler.handle holds its lock while emit runs; readers acquire it too.
+        summary = getattr(record, "replay_summary", None)
+        if summary is not None:
+            now = time.monotonic()
+            if summary == self.last_summary and self.last_summary_at is not None and now - self.last_summary_at < 600:
+                return
+            self.last_summary = summary
+            self.last_summary_at = now
         for line in self.format(record).splitlines():
             self.sequence += 1
             self.lines.append((self.sequence, record.levelno, line))
@@ -390,11 +400,11 @@ class Dashboard:
         line(height - 5, f"Started: {started_label(self.args, snapshot)} | I: Session info", self.colors.get(3, 0))
         selected_status = by_key.get(self.tasks.selected, {}).get("status", "") if self.focus == 0 else ""
         detail = selected_status if len(selected_status) > 12 else ""
-        line(
-            height - 2,
-            getattr(self.args, "session_warning", "") or detail,
-            self.colors.get(4, 0) | curses.A_BOLD,
-        )
+        activity = self.activity_label(snapshot)
+        line(height - 2, activity, self.colors.get(3, 0))
+        detail = getattr(self.args, "session_warning", "") or detail
+        if detail:
+            line(height - 2, " | " + detail, self.colors.get(4, 0), x=len(activity) + 1)
         self.draw_action_bar(screen, snapshot, height - 4, width)
         blocked = self.permissions(snapshot)["blocked_count"]
         message = snapshot.get("message", "Starting")
@@ -403,6 +413,21 @@ class Dashboard:
         line(height - 3, message, self.colors.get(3, 0))
         line(height - 1, "I: info | P: permissions | Tab: pane | ↑/↓ PgUp/PgDn Home/End | Q/Ctrl+C: stop", curses.A_DIM)
         screen.refresh()
+
+    def activity_label(self, snapshot):
+        sampled = snapshot.get("sampled_at")
+        checked = "not yet completed"
+        if sampled:
+            try:
+                checked = datetime.fromisoformat(sampled).astimezone(UTC).strftime("%H:%M:%S UTC")
+            except ValueError:
+                checked = str(sampled)
+        if getattr(self.args, "view_only", False):
+            mode = "VIEW ONLY"
+        else:
+            frame = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[int(time.monotonic() * 2) % 10]
+            mode = f"{frame} MONITORING"
+        return f"{mode} | Last check: {checked}"
 
     def open_report(self, path):
         try:
