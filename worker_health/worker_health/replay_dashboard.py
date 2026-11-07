@@ -12,6 +12,7 @@ from textwrap import wrap
 from create_tc_task import format_elapsed
 
 from worker_health.replay_permissions import ARTIFACT_NOTE, permission_summary
+from worker_health.replay_session_info import current_invocation, report_path, started_label
 
 
 class LogBuffer(logging.Handler):
@@ -117,6 +118,10 @@ class Dashboard:
         self.recheck_pending = False
         self.recheck_previous = None
         self.client_notice = ""
+        self.info_open = False
+        self.info_top = 0
+        self.info_limit = 0
+        self.report_notice = ""
 
     def run(self):
         return curses.wrapper(self.screen)
@@ -147,6 +152,33 @@ class Dashboard:
             try:
                 self.draw(screen)
                 key = screen.getch()
+                if self.info_open:
+                    if key in (ord("i"), ord("I"), ord("q"), ord("Q"), 27):
+                        self.info_open = False
+                    elif key in (ord("o"), ord("O")):
+                        path = report_path(self.args, self.get_snapshot())
+                        if path:
+                            threading.Thread(target=self.open_report, args=(path,), daemon=True).start()
+                    else:
+                        page = max(1, screen.getmaxyx()[0] - 5)
+                        moves = {
+                            curses.KEY_UP: -1,
+                            curses.KEY_DOWN: 1,
+                            curses.KEY_PPAGE: -page,
+                            curses.KEY_LEFT: -page,
+                            curses.KEY_NPAGE: page,
+                            curses.KEY_RIGHT: page,
+                        }
+                        if key == curses.KEY_HOME:
+                            self.info_top = 0
+                        elif key == curses.KEY_END:
+                            self.info_top = self.info_limit
+                        elif key in moves:
+                            self.info_top = max(0, min(self.info_limit, self.info_top + moves[key]))
+                    if key != 3:
+                        if self.done.is_set():
+                            return
+                        continue
                 if self.permissions_open:
                     if key in (ord("p"), ord("P"), ord("q"), ord("Q"), 27):
                         self.permissions_open = False
@@ -198,6 +230,10 @@ class Dashboard:
                     self.permissions_open = True
                     self.permission_top = 0
                     continue
+                if key in (ord("i"), ord("I")):
+                    self.info_open = True
+                    self.info_top = 0
+                    continue
                 viewing = getattr(self.args, "view_only", False)
                 if viewing and key in (ord("r"), ord("R")):
                     self.args.resume_requested = True
@@ -218,7 +254,8 @@ class Dashboard:
                         self.args.replay_wake.set()
                 if key == 9:
                     self.focus = 1 - self.focus
-                height = self.dimensions(*screen.getmaxyx())[self.focus]
+                rows, columns = screen.getmaxyx()
+                height = self.dimensions(rows, columns, len(self.pool_header(columns)))[self.focus]
                 commands = {
                     curses.KEY_UP: "up",
                     curses.KEY_DOWN: "down",
@@ -244,9 +281,20 @@ class Dashboard:
                 return
 
     @staticmethod
-    def dimensions(height, _width):
+    def dimensions(height, _width, header_rows=1):
         log_lines = min(8, max(3, (height - 8) // 3))
-        return max(1, height - log_lines - 11), log_lines
+        log_lines = min(log_lines, max(1, height - header_rows - 10))
+        return max(1, height - log_lines - 10 - (header_rows - 1)), log_lines
+
+    def pool_header(self, width):
+        title = f"Replay: {self.args.from_pool} → {self.args.queue}"
+        if len(title) <= width - 2:
+            return [title]
+        return [
+            part
+            for text in (f"Source: {self.args.from_pool}", f"Destination: {self.args.queue}")
+            for part in wrap(text, width - 2, break_on_hyphens=False)
+        ]
 
     def draw(self, screen):
         screen.erase()
@@ -264,13 +312,22 @@ class Dashboard:
             screen.refresh()
             return
         snapshot = self.get_snapshot()
+        if self.info_open:
+            self.draw_info(screen, snapshot, line, height, width)
+            return
         if self.permissions_open:
             self.draw_permissions(screen, snapshot, line, height, width)
             return
-        task_height, log_height = self.dimensions(height, width)
-        line(0, f"Replay: {self.args.from_pool} → {self.args.queue}", curses.A_BOLD)
+        header = self.pool_header(width)
+        if height < len(header) + 11:
+            line(0, f"Resize to at least {len(header) + 11} rows to show full pool names. Q: exit")
+            screen.refresh()
+            return
+        task_height, log_height = self.dimensions(height, width, len(header))
+        for y, text in enumerate(header):
+            line(y, text, curses.A_BOLD)
         line(
-            1,
+            len(header),
             f"Workers: {snapshot.get('workers', 0)} | Outstanding: {snapshot.get('outstanding', 0)}/{snapshot.get('limit', 0)} | "
             f"{'★ Full coverage' if snapshot.get('full_coverage') else 'Coverage'}: "
             f"{snapshot.get('passed', 0)}/{snapshot.get('eligible', 0)} eligible types | {snapshot.get('excluded', 0)} excluded",
@@ -283,14 +340,14 @@ class Dashboard:
         self.tasks.sync(self.order, task_height)
         task_style = self.colors.get(3, 0) | curses.A_BOLD if self.focus == 0 else curses.A_DIM
         task_header = f"━━━ Tasks {self.tasks.position_label(task_height)}"
-        line(2, task_header + " " + "━" * max(0, width - len(task_header) - 3), task_style)
+        line(len(header) + 1, task_header + " " + "━" * max(0, width - len(task_header) - 3), task_style)
         name_width = max(12, width - 58)
         line(
-            3,
+            len(header) + 2,
             f"  {'Workload':<{name_width}} {'Coverage':<15} {'Pass':>4} {'Try':>4} {'Status':<12} Elapsed",
             curses.A_UNDERLINE,
         )
-        for y, key in enumerate(self.order[self.tasks.top : self.tasks.top + task_height], 4):
+        for y, key in enumerate(self.order[self.tasks.top : self.tasks.top + task_height], len(header) + 3):
             row = by_key[key]
             color = {"passed": 1, "unsuccessful": 2, "awaiting result": 3}.get(row["coverage"], 0)
             style = self.colors.get(color, 0)
@@ -317,7 +374,7 @@ class Dashboard:
         logs = self.logs.snapshot()
         self.log_cursor.sync([entry[0] for entry in logs], log_height)
         new = max(0, logs[-1][0] - self.log_cursor.seen) if logs and not self.log_cursor.follow else 0
-        log_start = 4 + task_height
+        log_start = len(header) + 3 + task_height
         log_style = self.colors.get(3, 0) | curses.A_BOLD if self.focus == 1 else curses.A_DIM
         label = "following" if self.log_cursor.follow else f"paused · {new} new lines · End to follow"
         log_header = f"━━━ Logs {self.log_cursor.position_label(log_height)} · {label}"
@@ -330,11 +387,11 @@ class Dashboard:
             if sequence == self.log_cursor.selected and self.focus == 1:
                 style |= curses.A_REVERSE
             line(y, f"{'›' if sequence == self.log_cursor.selected else ' '} {text}", style)
-        line(height - 6, f"Session: {getattr(self.args, 'session', '-')}", curses.A_DIM)
+        line(height - 5, f"Started: {started_label(self.args, snapshot)} | I: Session info", self.colors.get(3, 0))
         selected_status = by_key.get(self.tasks.selected, {}).get("status", "") if self.focus == 0 else ""
         detail = selected_status if len(selected_status) > 12 else ""
         line(
-            height - 5,
+            height - 2,
             getattr(self.args, "session_warning", "") or detail,
             self.colors.get(4, 0) | curses.A_BOLD,
         )
@@ -344,13 +401,65 @@ class Dashboard:
         if blocked:
             message = f"{blocked} workloads blocked by missing scopes — P: permissions | {message}"
         line(height - 3, message, self.colors.get(3, 0))
-        report_path = (
-            self.args.session_info.report_path
-            if getattr(self.args, "session_info", None)
-            else getattr(self.args, "report", None) or "initializing"
+        line(height - 1, "I: info | P: permissions | Tab: pane | ↑/↓ PgUp/PgDn Home/End | Q/Ctrl+C: stop", curses.A_DIM)
+        screen.refresh()
+
+    def open_report(self, path):
+        try:
+            opened = webbrowser.open(Path(path).expanduser().absolute().as_uri())
+        except (OSError, webbrowser.Error):
+            opened = False
+        self.report_notice = "Report opened." if opened else "Could not open report; use the full path below."
+
+    def draw_info(self, screen, snapshot, line, height, width):
+        heading = self.colors.get(3, 0) | curses.A_BOLD
+        line(0, "Session info", heading)
+        line(1, f"Started: {started_label(self.args, snapshot)}")
+        line(2, self.report_notice, self.colors.get(4, 0))
+        session = getattr(self.args, "session_info", None)
+        session_path = str(session.path) if session else getattr(self.args, "session", None)
+        content = [
+            ("Mode", heading),
+            ("View only" if getattr(self.args, "view_only", False) else "Live monitoring", 0),
+            ("", 0),
+            ("Source pool", heading),
+            (self.args.from_pool, 0),
+            ("", 0),
+            ("Destination pool", heading),
+            (self.args.queue, 0),
+            ("", 0),
+            ("Session directory", heading),
+            (session_path or "Not available", 0),
+            ("", 0),
+            ("Report — O: open", heading),
+            (str(report_path(self.args, snapshot) or "Initializing"), 0),
+            ("", 0),
+            ("Invocation with current settings", heading),
+            (current_invocation(self.args, snapshot), 0),
+            ("", 0),
+            (
+                "Run from the worker_health project directory. Wrapped text continues without omitted characters.",
+                curses.A_DIM,
+            ),
+        ]
+        lines = [
+            (part, style)
+            for text, style in content
+            for part in (
+                wrap(text, width - 3, replace_whitespace=False, drop_whitespace=False, break_on_hyphens=False) or [""]
+            )
+        ]
+        available = max(1, height - 5)
+        self.info_limit = max(0, len(lines) - available)
+        self.info_top = min(self.info_top, self.info_limit)
+        for y, (text, style) in enumerate(lines[self.info_top : self.info_top + available], 3):
+            line(y, text, style)
+        line(
+            height - 2,
+            f"Lines {self.info_top + 1}–{min(len(lines), self.info_top + available)} of {len(lines)}",
+            curses.A_DIM,
         )
-        line(height - 2, f"Report: {report_path}", curses.A_DIM)
-        line(height - 1, "P: permissions | Tab: pane | ↑/↓: row | PgUp/PgDn | Home/End | Q/Ctrl+C: stop", curses.A_DIM)
+        line(height - 1, "I/Esc/Q: back | O: open report | ↑/↓ PgUp/PgDn Home/End: scroll", curses.A_BOLD)
         screen.refresh()
 
     def draw_action_bar(self, screen, snapshot, y, width):

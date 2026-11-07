@@ -2,11 +2,61 @@ import curses
 import json
 import logging
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 from worker_health.replay_dashboard import Dashboard, LogBuffer, PaneCursor, run_dashboard
 from worker_health.replay_permissions import permission_summary
 from worker_health.replay_report import ReplayReport
+from worker_health.replay_sessions import ReplaySession
+
+
+def test_full_pool_names_and_compact_footer(mocker):
+    args = SimpleNamespace(
+        from_pool="releng-hardware/gecko-t-linux-talos-2404",
+        queue="releng-hardware/gecko-t-linux-talos-2404-tc-v115",
+        session_info=ReplaySession(Path("/tmp/session"), "source", "dest", "2026-11-05T18:47:11Z"),
+    )
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (24, 80)
+    view.draw(screen)
+    rendered = "\n".join(call.args[2] for call in screen.addnstr.call_args_list)
+    assert args.from_pool in rendered
+    assert args.queue in rendered
+    assert "Started: Nov 05, 2026, 18:47 UTC | I: Session info" in rendered
+    assert "Report:" not in rendered
+    assert "/tmp/session" not in rendered
+    assert "SUBMISSIONS PAUSED" in rendered
+
+
+def test_session_info_navigation_and_open_report(mocker, tmp_path):
+    session = ReplaySession(tmp_path / "long session name", "source/pool", "dest/pool", "2026-11-05T18:47:11Z")
+    args = SimpleNamespace(
+        session_info=session,
+        from_pool=session.source,
+        queue=session.destination,
+        submissions_enabled=False,
+        stop_on_full_coverage=True,
+    )
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    browser = mocker.patch("worker_health.replay_dashboard.webbrowser.open", return_value=True)
+    mocker.patch(
+        "worker_health.replay_dashboard.threading.Thread",
+        side_effect=lambda target, args, daemon: SimpleNamespace(start=lambda: target(*args)),
+    )
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (20, 80)
+    screen.getch.side_effect = [ord("i"), ord("s"), ord("f"), ord("o"), curses.KEY_END, 27, ord("q")]
+    view.screen(screen)
+    browser.assert_called_once_with(session.report_path.as_uri())
+    assert view.info_top == view.info_limit > 0
+    assert not args.submissions_enabled
+    assert args.stop_on_full_coverage
+    assert not view.info_open
+    assert view.stop.is_set()
 
 
 def test_permissions_keys_recheck_without_changing_submission_settings(mocker):

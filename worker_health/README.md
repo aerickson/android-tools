@@ -274,6 +274,14 @@ Both pane headers show the visible row range and total, with `↑ earlier` and
 `↓ more` when content is offscreen. Log positions refer to the retained buffer.
 
 - Tab switches between task and log panes; the focused pane is highlighted.
+- I opens session info with the start date, full source and destination pool
+  names, complete session/report paths, and an invocation reflecting the current
+  settings. O opens the report in your browser. Scroll with Up/Down, Page Up/Page
+  Down, or Home/End; I, Esc, or Q returns to the dashboard. Commands assume the
+  `worker_health` project directory. Saved-view invocations stay read-only;
+  live invocations resume the same session and preserve submission settings.
+  The main dashboard keeps full pool names in its header (wrapping when needed)
+  and a compact start date plus I shortcut above the colored action bar.
 - P opens permissions: blocked workload count, exact missing scopes and affected
   workloads, suggested grants, and a link to the current Taskcluster client
   (or the clients page when its ID is unavailable). O opens that Firefox CI
@@ -318,7 +326,7 @@ during this session, even those absent from the current bounded source history.
 Active sessions update their canonical `report.json`; `--report PATH` also
 writes a copy at the requested location. In view mode it exports the saved
 snapshot without changing the original. The path is shown at startup, in the
-dashboard, and on exit. Reports update atomically after each active cycle and
+session info panel, and on exit. Reports update atomically after each active cycle and
 on clean exit, including incomplete runs. `sampled_at` records the last successful
 monitoring cycle; simply viewing, saving, or failing a cycle does not advance it.
 Reports include coverage and
