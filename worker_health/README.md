@@ -274,6 +274,19 @@ Both pane headers show the visible row range and total, with `↑ earlier` and
 `↓ more` when content is offscreen. Log positions refer to the retained buffer.
 
 - Tab switches between task and log panes; the focused pane is highlighted.
+- P opens permissions: blocked workload count, exact missing scopes and affected
+  workloads, suggested grants, and a link to the current Taskcluster client
+  (or the clients page when its ID is unavailable). O opens that Firefox CI
+  page in your browser. Missing scopes are red, suggested grants green, headings
+  and links cyan, and warnings yellow. A switches between currently
+  needed grants and the full recommended setup. Suggestions use the known
+  level-1 secret/cache wildcards; unfamiliar permissions stay exact. The Gecko
+  artifact wildcard is labeled separately because it spans SCM levels.
+  Scroll with Up/Down, Page Up/Page Down, or Home/End. P, Esc, or Q returns to
+  the dashboard; Ctrl+C stops monitoring.
+- Within permissions, R wakes active monitoring to recheck effective client
+  scopes without changing submission or coverage settings. Saved views show
+  saved permissions; return to the dashboard and resume monitoring to recheck.
 - In view mode, R resumes monitoring; load controls are disabled and elapsed
   times remain frozen at the saved sample.
 - In active monitoring, S toggles submissions (default off on every launch).
@@ -308,6 +321,10 @@ Reports include coverage and
 discovery details, settings, exclusions and missing scopes, per-workload
 attempts/successes/failures, task links, outstanding work, and an exit reason.
 Task entries distinguish existing tasks from submissions during this invocation.
+Active reports also write `suggested-scopes.txt` alongside the canonical report
+and any `--report` copy. It contains only the currently suggested missing grants,
+one per line for copying into the client editor, and becomes empty when none
+are missing. Permissions and suggestions refresh after each monitoring cycle.
 Credentials and replay task definitions are omitted. Report write failures are
 reported as errors. See the [coverage design notes](docs/REPLAY_COVERAGE_PLAN.md).
 

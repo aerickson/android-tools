@@ -143,6 +143,27 @@ def test_scope_filter_and_live_recheck(setup):
     assert "Permissions changed" in instance.message
 
 
+def test_permissions_snapshot_updates_after_client_grants_change(setup):
+    instance, jobs = setup
+    instance.args.submissions_enabled = False
+    instance.queue.options = {"credentials": {"clientId": "user/client", "accessToken": "private-token"}}
+    instance.auth.currentScopes.return_value = {"scopes": []}
+    instance.tick()
+    data = instance.snapshot()
+    assert data["permissions"]["blocked_count"] == len(jobs)
+    assert data["permissions"]["client_url"].endswith("/user%2Fclient")
+    assert "private-token" not in json.dumps(instance.report())
+    checked = data["permissions"]["checked_at"]
+    instance.auth.currentScopes.return_value = {"scopes": ["*"]}
+    instance.clock = lambda: NOW + timedelta(seconds=1)
+    instance.tick()
+    refreshed = instance.snapshot()["permissions"]
+    assert refreshed["checked_at"] != checked
+    assert refreshed["blocked_count"] == 0
+    assert refreshed["suggested_scopes"] == []
+    instance.queue.createTask.assert_not_called()
+
+
 def test_dry_run_validates_without_reserving_or_submitting(setup):
     instance, _ = setup
     instance.args.dry_run = True

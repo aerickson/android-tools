@@ -5,7 +5,104 @@ import threading
 from types import SimpleNamespace
 
 from worker_health.replay_dashboard import Dashboard, LogBuffer, PaneCursor, run_dashboard
+from worker_health.replay_permissions import permission_summary
 from worker_health.replay_report import ReplayReport
+
+
+def test_permissions_keys_recheck_without_changing_submission_settings(mocker):
+    args = SimpleNamespace(
+        from_pool="source/pool",
+        queue="dest/pool",
+        submissions_enabled=False,
+        stop_on_full_coverage=True,
+        replay_wake=threading.Event(),
+    )
+    snapshot = {"permissions": permission_summary([], args.queue, checked_at="before")}
+    view = Dashboard(args, LogBuffer(), lambda: snapshot, threading.Event(), threading.Event())
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 120)
+    keys = iter([ord("p"), ord("a"), ord("s"), ord("f"), ord("r"), 27, ord("q")])
+
+    def getch():
+        key = next(keys)
+        if key == 27:
+            assert args.replay_wake.is_set()
+            assert view.recheck_pending
+            snapshot["permissions"]["checked_at"] = "after"
+            view.draw(screen)
+            assert not view.recheck_pending
+        return key
+
+    screen.getch.side_effect = getch
+    view.screen(screen)
+    assert view.full_setup
+    assert not args.submissions_enabled
+    assert args.stop_on_full_coverage
+    assert view.stop.is_set()
+
+
+def test_permissions_saved_view_does_not_recheck_or_resume(mocker):
+    args = SimpleNamespace(from_pool="source/pool", queue="dest/pool", view_only=True, replay_wake=threading.Event())
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 120)
+    screen.getch.side_effect = [ord("p"), ord("r"), ord("q"), ord("r")]
+    view.screen(screen)
+    assert not args.replay_wake.is_set()
+    assert not view.recheck_pending
+    assert args.resume_requested
+
+
+def test_permissions_opens_active_firefox_ci_client(mocker):
+    args = SimpleNamespace(from_pool="source/pool", queue="dest/pool")
+    client_id = "mozilla-auth0/ad|Mozilla-LDAP|aerickson/cli-tools"
+    permissions = permission_summary([], args.queue, client_id=client_id)
+    view = Dashboard(args, LogBuffer(), lambda: {"permissions": permissions}, threading.Event(), threading.Event())
+    browser = mocker.patch("worker_health.replay_dashboard.webbrowser.open", return_value=True)
+    mocker.patch(
+        "worker_health.replay_dashboard.threading.Thread",
+        side_effect=lambda target, args, daemon: SimpleNamespace(start=lambda: target(*args)),
+    )
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 120)
+    screen.getch.side_effect = [ord("p"), ord("o"), 27, ord("q")]
+    view.screen(screen)
+    browser.assert_called_once_with(
+        "https://firefox-ci-tc.services.mozilla.com/auth/clients/"
+        "mozilla-auth0%2Fad%7CMozilla-LDAP%7Caerickson%2Fcli-tools",
+    )
+    assert view.client_notice == "Client page opened in your browser."
+
+
+def test_permissions_screen_scrolls_to_exact_scopes_and_shows_artifact_breadth(mocker):
+    args = SimpleNamespace(from_pool="source/pool", queue="dest/pool", report="/tmp/session/report.json")
+    permissions = permission_summary(
+        [
+            {"name": "workload-" + str(i), "missing_scopes": ["queue:get-artifact:project/gecko/talos-pdfs/*"]}
+            for i in range(30)
+        ],
+        args.queue,
+    )
+    snapshot = {"permissions": permissions}
+    view = Dashboard(args, LogBuffer(), lambda: snapshot, threading.Event(), threading.Event())
+    view.permissions_open = True
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (20, 120)
+    view.draw(screen)
+    initial = "\n".join(call.args[2] for call in screen.addnstr.call_args_list)
+    assert "across SCM levels" in initial
+    assert "suggested-scopes.txt" in initial
+    view.permission_top = view.permission_limit
+    screen.reset_mock()
+    view.draw(screen)
+    last = "\n".join(call.args[2] for call in screen.addnstr.call_args_list)
+    assert "workload-29" in last
 
 
 def test_task_cursor_follows_identity_when_rows_change():

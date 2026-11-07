@@ -27,6 +27,7 @@ from rich.text import Text
 
 from worker_health.replay_cache import load_discovery, save_discovery
 from worker_health.replay_coverage import remember_results, remember_submission
+from worker_health.replay_permissions import permission_summary
 from worker_health.replay_picker import ReplayJob, discover_jobs, missing_scopes
 
 ACTIVE = ("reserved", "pending", "running", "unscheduled")
@@ -205,6 +206,7 @@ class ReplayController:
         self.jobs = []
         self.known_jobs = {}
         self.granted = []
+        self.scopes_checked_at = None
         self.last_discovery = None
         self.workers = self.outstanding = self.limit = 0
         self.message = "Starting"
@@ -337,6 +339,7 @@ class ReplayController:
         self.reconcile(now)
         self.progress("Reading current client scopes")
         self.granted = self.auth.currentScopes()["scopes"]
+        self.scopes_checked_at = self.clock().isoformat()
         if (
             self.last_discovery is None
             or (now - self.last_discovery).total_seconds() >= self.args.source_refresh_minutes * 60
@@ -600,7 +603,7 @@ class ReplayController:
                 "report_path": getattr(self.args, "report", None),
             }
         passed, eligible, rows = self.display_rows()
-        return {
+        data = {
             "workers": self.workers,
             "outstanding": self.outstanding,
             "limit": self.limit,
@@ -627,10 +630,20 @@ class ReplayController:
                     "observed_at": self.clock().timestamp(),
                     "source_present": key in {workload_key(self.args.from_pool, job) for job in self.jobs},
                     "last_seen": self.histories.get(key, {}).get("last_seen"),
+                    "missing_scopes": missing_scopes(self.known_jobs[key].task, self.args.queue, self.granted),
                 }
                 for _, key, name, coverage, successes, attempts, status, elapsed in rows
             ],
         }
+        options = self.queue.options if isinstance(self.queue.options, dict) else {}
+        client_id = options.get("credentials", {}).get("clientId")
+        data["permissions"] = permission_summary(
+            data["rows"],
+            self.args.queue,
+            client_id=client_id,
+            checked_at=self.scopes_checked_at,
+        )
+        return data
 
     def report(self):
         if not self.view_ready and self.saved_snapshot.get("rows"):

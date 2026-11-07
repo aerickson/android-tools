@@ -4,6 +4,7 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
+from worker_health.replay_permissions import write_suggestions
 from worker_health.replay_sessions import create_session, write_json
 
 
@@ -62,6 +63,13 @@ class ReplayReport:
             "exit_reason": exit_reason,
         }
         write_json(self.path, report)
+        if "permissions" in report:
+            write_suggestions(self.path.with_name("suggested-scopes.txt"), report["permissions"]["suggested_scopes"])
         if self.copy_path:
             write_json(self.copy_path, report)
+            if "permissions" in report:
+                write_suggestions(
+                    self.copy_path.with_name("suggested-scopes.txt"),
+                    report["permissions"]["suggested_scopes"],
+                )
         return report

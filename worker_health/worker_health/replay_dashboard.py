@@ -4,9 +4,14 @@ import curses
 import logging
 import threading
 import time
+import webbrowser
 from collections import deque
+from pathlib import Path
+from textwrap import wrap
 
 from create_tc_task import format_elapsed
+
+from worker_health.replay_permissions import ARTIFACT_NOTE, permission_summary
 
 
 class LogBuffer(logging.Handler):
@@ -105,6 +110,13 @@ class Dashboard:
         self.order = []
         self.focus = 0
         self.colors = {}
+        self.permissions_open = False
+        self.full_setup = False
+        self.permission_top = 0
+        self.permission_limit = 0
+        self.recheck_pending = False
+        self.recheck_previous = None
+        self.client_notice = ""
 
     def run(self):
         return curses.wrapper(self.screen)
@@ -129,11 +141,57 @@ class Dashboard:
             try:
                 self.draw(screen)
                 key = screen.getch()
+                if self.permissions_open:
+                    if key in (ord("p"), ord("P"), ord("q"), ord("Q"), 27):
+                        self.permissions_open = False
+                    elif key in (ord("a"), ord("A")):
+                        self.full_setup = not self.full_setup
+                        self.permission_top = 0
+                    elif key in (ord("o"), ord("O")):
+                        url = self.permissions(self.get_snapshot())["client_url"]
+                        threading.Thread(target=self.open_client, args=(url,), daemon=True).start()
+                    elif key in (ord("r"), ord("R")) and not getattr(self.args, "view_only", False):
+                        self.recheck_previous = self.permissions(self.get_snapshot()).get("checked_at")
+                        self.recheck_pending = True
+                        if getattr(self.args, "replay_wake", None):
+                            self.args.replay_wake.set()
+                    elif key in (
+                        curses.KEY_UP,
+                        curses.KEY_DOWN,
+                        curses.KEY_PPAGE,
+                        curses.KEY_NPAGE,
+                        curses.KEY_LEFT,
+                        curses.KEY_RIGHT,
+                        curses.KEY_HOME,
+                        curses.KEY_END,
+                    ):
+                        page = max(1, screen.getmaxyx()[0] - 5)
+                        if key == curses.KEY_HOME:
+                            self.permission_top = 0
+                        elif key == curses.KEY_END:
+                            self.permission_top = self.permission_limit
+                        else:
+                            delta = (
+                                -1
+                                if key == curses.KEY_UP
+                                else 1
+                                if key == curses.KEY_DOWN
+                                else (-page if key in (curses.KEY_PPAGE, curses.KEY_LEFT) else page)
+                            )
+                            self.permission_top = max(0, min(self.permission_limit, self.permission_top + delta))
+                    if key != 3:
+                        if self.done.is_set():
+                            return
+                        continue
                 if key in (ord("q"), ord("Q"), 3):
                     self.stop.set()
                     if getattr(self.args, "replay_wake", None):
                         self.args.replay_wake.set()
                     return
+                if key in (ord("p"), ord("P")):
+                    self.permissions_open = True
+                    self.permission_top = 0
+                    continue
                 viewing = getattr(self.args, "view_only", False)
                 if viewing and key in (ord("r"), ord("R")):
                     self.args.resume_requested = True
@@ -200,6 +258,9 @@ class Dashboard:
             screen.refresh()
             return
         snapshot = self.get_snapshot()
+        if self.permissions_open:
+            self.draw_permissions(screen, snapshot, line, height, width)
+            return
         task_height, log_height = self.dimensions(height, width)
         line(0, f"Replay: {self.args.from_pool} → {self.args.queue}", curses.A_BOLD)
         line(
@@ -285,14 +346,121 @@ class Dashboard:
             ),
             curses.A_BOLD,
         )
-        line(height - 3, snapshot.get("message", "Starting"), self.colors.get(3, 0))
+        blocked = self.permissions(snapshot)["blocked_count"]
+        message = snapshot.get("message", "Starting")
+        if blocked:
+            message = f"{blocked} workloads blocked by missing scopes — P: permissions | {message}"
+        line(height - 3, message, self.colors.get(3, 0))
         report_path = (
             self.args.session_info.report_path
             if getattr(self.args, "session_info", None)
             else getattr(self.args, "report", None) or "initializing"
         )
         line(height - 2, f"Report: {report_path}", curses.A_DIM)
-        line(height - 1, "Tab: pane | ↑/↓: row | PgUp/← PgDn/→: screen | Home/End | Q/Ctrl+C: stop", curses.A_DIM)
+        line(height - 1, "P: permissions | Tab: pane | ↑/↓: row | PgUp/PgDn | Home/End | Q/Ctrl+C: stop", curses.A_DIM)
+        screen.refresh()
+
+    def permissions(self, snapshot):
+        return snapshot.get("permissions") or permission_summary(snapshot.get("rows", []), self.args.queue)
+
+    def open_client(self, url):
+        try:
+            opened = webbrowser.open(url)
+        except (OSError, webbrowser.Error):
+            opened = False
+        self.client_notice = (
+            "Client page opened in your browser." if opened else "Could not open browser; copy the URL below."
+        )
+
+    def draw_permissions(self, screen, snapshot, line, height, width):
+        permissions = self.permissions(snapshot)
+        if self.recheck_pending and permissions.get("checked_at") != self.recheck_previous:
+            self.recheck_pending = False
+        heading = self.colors.get(3, 0) | curses.A_BOLD
+        grant_style = self.colors.get(1, 0)
+        missing_style = self.colors.get(2, 0) | curses.A_BOLD
+        warning_style = self.colors.get(4, 0)
+        link_style = self.colors.get(3, 0) | curses.A_UNDERLINE
+        line(
+            0,
+            f"Permissions — {permissions['blocked_count']} workloads blocked by missing scopes",
+            missing_style if permissions["blocked_count"] else grant_style | curses.A_BOLD,
+        )
+        viewing = getattr(self.args, "view_only", False)
+        status = (
+            "Saved permissions; resume monitoring to recheck."
+            if viewing
+            else "Rechecking permissions…"
+            if self.recheck_pending
+            else f"Last checked: {permissions.get('checked_at') or 'not yet checked'}"
+        )
+        if not viewing and snapshot.get("message", "").startswith("Cycle paused:"):
+            status = snapshot["message"]
+            self.recheck_pending = False
+        line(1, status, warning_style if self.recheck_pending else curses.A_DIM)
+        line(2, self.client_notice, warning_style)
+        report_path = snapshot.get("report_path") or getattr(self.args, "report", None)
+        if not report_path and getattr(self.args, "session_info", None):
+            report_path = self.args.session_info.report_path
+        content = [
+            ("Firefox CI client page — O: open in browser", heading),
+            (permissions["client_url"], link_style),
+            ("", 0),
+            (
+                "Full recommended setup (includes grants not currently missing):"
+                if self.full_setup
+                else "Suggested grants for currently blocked workloads:",
+                heading,
+            ),
+        ]
+        scopes = permissions["recommended_scopes"] if self.full_setup else permissions["suggested_scopes"]
+        content.extend(
+            (scope, grant_style) for scope in (scopes or ["No additional grants needed for observed workloads."])
+        )
+        if any(scope.startswith("queue:get-artifact:project/gecko/") for scope in scopes):
+            content.extend([("", 0), (ARTIFACT_NOTE, warning_style)])
+        content.extend(
+            [
+                ("", 0),
+                ("Suggestions use known level-1 secret/cache prefixes; unfamiliar scopes stay exact.", curses.A_DIM),
+            ],
+        )
+        if report_path:
+            content.extend(
+                [
+                    ("Copy currently needed grants from:", heading),
+                    (str(Path(report_path).with_name("suggested-scopes.txt")), link_style),
+                ],
+            )
+        content.extend([("", 0), ("Exact missing scopes and affected workloads:", heading)])
+        for scope in permissions["missing_scopes"]:
+            content.append((scope, missing_style))
+            content.extend(
+                ("  " + row["name"], curses.A_DIM) for row in permissions["workloads"] if scope in row["missing_scopes"]
+            )
+        if not permissions["missing_scopes"]:
+            content.append(("None.", grant_style))
+        lines = [
+            (part, style)
+            for item, style in content
+            for part in (wrap(item, max(1, width - 3), replace_whitespace=False) or [""])
+        ]
+        available = max(1, height - 5)
+        self.permission_limit = max(0, len(lines) - available)
+        self.permission_top = min(self.permission_top, self.permission_limit)
+        for y, (text, style) in enumerate(lines[self.permission_top : self.permission_top + available], 3):
+            line(y, text, style)
+        line(
+            height - 2,
+            f"Lines {self.permission_top + 1}–{min(len(lines), self.permission_top + available)} of {len(lines)}",
+            curses.A_DIM,
+        )
+        line(
+            height - 1,
+            "P/Esc/Q: back | O: client page | A: needed/full | ↑/↓ PgUp/PgDn | "
+            + ("R: recheck" if not viewing else "saved view"),
+            curses.A_BOLD,
+        )
         screen.refresh()
 
 
