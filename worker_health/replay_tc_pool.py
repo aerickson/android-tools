@@ -106,6 +106,12 @@ def parse_args():
         default=False,
         help="Write the report and exit when full coverage is confirmed (default: off)",
     )
+    parser.add_argument(
+        "--successes-per-type",
+        type=positive_int,
+        default=None,
+        help="Successful replays required per type (default: saved target or 1)",
+    )
     parser.add_argument("--session", help="Session directory (or its report.json) to view")
     parser.add_argument("--resume", action="store_true", help="Resume monitoring and update an existing session")
     parser.add_argument(
@@ -162,6 +168,8 @@ def select_session(args, interactive):
             if args.resume:
                 raise ValueError("No matching session to resume; use --new-session to start one")
             session = create_session(args.from_pool, args.queue)
+    if args.successes_per_type is None:
+        args.successes_per_type = session.report().get("successes_per_type", 1)
     args.view_only = existing and not args.resume
     if args.view_only and args.submit_on_start:
         raise ValueError("Viewing does not submit tasks; add --resume or select --new-session")

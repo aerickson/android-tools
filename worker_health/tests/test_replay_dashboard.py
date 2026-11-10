@@ -418,3 +418,16 @@ def test_submit_key_enables_active_monitoring(mocker):
     screen.getch.side_effect = [ord("s"), ord("q")]
     view.screen(screen)
     assert args.submissions_enabled and args.replay_wake.is_set()
+
+
+def test_plus_raises_success_target_and_wakes_scheduler(mocker):
+    args = SimpleNamespace(from_pool="source/pool", queue="target/pool", replay_wake=threading.Event())
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 120)
+    screen.getch.side_effect = [ord("+"), ord("q")]
+    view.screen(screen)
+    assert args.successes_per_type == 2
+    assert args.replay_wake.is_set()

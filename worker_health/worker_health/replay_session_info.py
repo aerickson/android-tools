@@ -37,6 +37,7 @@ def current_invocation(args, snapshot):
     for name, default in (("stop_on_full_coverage", True), ("exit_on_full_coverage", False)):
         command.append("--" + ("" if getattr(args, name, default) else "no-") + name.replace("_", "-"))
     for name in (
+        "successes_per_type",
         "worker_active_minutes",
         "tasks_per_worker",
         "poll_interval",

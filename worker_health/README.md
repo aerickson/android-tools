@@ -606,3 +606,11 @@ Logs worker health metrics to influx.
 ```
 ./influx_logger.py -h
 ```
+
+To run another sweep in an active replay dashboard, press **+** to raise the
+success target from 1 to 2 (or higher). Each eligible type runs until it reaches
+that many successful replays, then scheduling pauses with the default coverage
+settings. Existing results remain in the session. Submissions must be enabled
+with **S** or `--submit-on-start`; raising the target preserves that setting.
+The target is saved in the session report and restored on resume. Use
+`--successes-per-type 2` to set it explicitly from the command line.

@@ -828,3 +828,19 @@ def test_destination_lock_is_shared_across_session_databases(tmp_path):
         controller.ControllerState(tmp_path / "second.sqlite3", lock_path=lock),
     ):
         pass
+
+
+def test_raise_success_target_runs_another_sweep_and_pauses(setup):
+    instance, jobs = setup
+    cover_jobs(instance, jobs)
+    instance.tick()
+    assert instance.paused
+    instance.args.successes_per_type = 2
+    instance.queue.status.return_value = {"status": {"state": "completed"}}
+    for minute in range(1, 5):
+        instance.clock = lambda minute=minute: NOW + timedelta(minutes=minute)
+        instance.tick()
+    assert instance.queue.createTask.call_count == len(jobs)
+    assert instance.paused
+    assert instance.report()["successes_per_type"] == 2
+    assert instance.report()["passed"] == len(jobs)

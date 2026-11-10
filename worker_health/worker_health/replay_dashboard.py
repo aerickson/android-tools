@@ -262,6 +262,14 @@ class Dashboard:
                     logging.getLogger(__name__).info("%s: %s", setting, getattr(self.args, setting))
                     if getattr(self.args, "replay_wake", None):
                         self.args.replay_wake.set()
+                if not viewing and key == ord("+"):
+                    self.args.successes_per_type = (getattr(self.args, "successes_per_type", None) or 1) + 1
+                    logging.getLogger(__name__).info(
+                        "Success target raised to %s per type",
+                        self.args.successes_per_type,
+                    )
+                    if getattr(self.args, "replay_wake", None):
+                        self.args.replay_wake.set()
                 if key == 9:
                     self.focus = 1 - self.focus
                 rows, columns = screen.getmaxyx()
@@ -340,7 +348,7 @@ class Dashboard:
             len(header),
             f"Workers: {snapshot.get('workers', 0)} | Outstanding: {snapshot.get('outstanding', 0)}/{snapshot.get('limit', 0)} | "
             f"{'★ Full coverage' if snapshot.get('full_coverage') else 'Coverage'}: "
-            f"{snapshot.get('passed', 0)}/{snapshot.get('eligible', 0)} eligible types | {snapshot.get('excluded', 0)} excluded",
+            f"{snapshot.get('passed', 0)}/{snapshot.get('eligible', 0)} eligible types | Target: {snapshot.get('successes_per_type', 1)} successes/type | {snapshot.get('excluded', 0)} excluded",
             self.colors.get(1, 0) | curses.A_BOLD if snapshot.get("full_coverage") else 0,
         )
         by_key = {row["key"]: row for row in snapshot.get("rows", [])}
@@ -502,7 +510,7 @@ class Dashboard:
                 ("F: Pause covered" if width >= 110 else "F: Pause", getattr(self.args, "stop_on_full_coverage", True)),
                 ("E: Exit covered" if width >= 110 else "E: Exit", getattr(self.args, "exit_on_full_coverage", False)),
             )
-            segments = []
+            segments = [("+: Raise target | ", False)]
             for label, on in settings:
                 if segments:
                     segments.append((" | ", False))

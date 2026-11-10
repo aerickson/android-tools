@@ -228,6 +228,10 @@ class ReplayController:
         self.view_ready = False
         self.refresh_view()
 
+    @property
+    def success_target(self):
+        return getattr(self.args, "successes_per_type", None) or 1
+
     def coverage_state(self):
         passed, eligible, _ = self.display_rows()
         full = bool(self.coverage_confirmed and eligible and passed == eligible)
@@ -428,11 +432,13 @@ class ReplayController:
                 key not in active_types
                 and "payload" in job.task
                 and history["expired_source_id"] != job.task_id
-                and not (getattr(self.args, "stop_on_full_coverage", True) and history["successes"])
+                and not (
+                    getattr(self.args, "stop_on_full_coverage", True) and history["successes"] >= self.success_target
+                )
                 and history["retry_after"] <= now.timestamp()
                 and not missing_scopes(job.task, self.args.queue, self.granted)
             ):
-                candidates.append((history["successes"] > 0, history["attempts"], history["last_attempt"], key, job))
+                candidates.append((history["successes"], history["attempts"], history["last_attempt"], key, job))
         # Stable sorting preserves shuffled order among equally ranked workloads.
         random.shuffle(candidates)
         for _, _, _, key, job in sorted(candidates, key=lambda item: item[:3]):
@@ -528,7 +534,7 @@ class ReplayController:
             history = self.histories.get(key, {"successes": 0, "attempts": 0, "retry_after": 0})
             denied = missing_scopes(job.task, self.args.queue, self.granted)
             eligible += not denied
-            passed += bool(history["successes"]) and not denied
+            passed += (history["successes"] >= self.success_target) and not denied
             task = self.active_tasks.get(key)
             task_state = task["state"] if task else None
             elapsed = "-"
@@ -558,7 +564,7 @@ class ReplayController:
                 if history["retry_after"] > now
                 else "ready"
             )
-            covered = bool(history["successes"])
+            covered = history["successes"] >= self.success_target
             failed = bool(history.get("failures", 0))
             active = key in self.active_types
             coverage = (
@@ -599,12 +605,14 @@ class ReplayController:
                 "full_coverage": False,
                 "paused": not getattr(self.args, "submissions_enabled", False),
                 "submissions_enabled": getattr(self.args, "submissions_enabled", False),
+                "successes_per_type": self.success_target,
                 "stop_on_full_coverage": getattr(self.args, "stop_on_full_coverage", True),
                 "exit_on_full_coverage": getattr(self.args, "exit_on_full_coverage", False),
                 "report_path": getattr(self.args, "report", None),
             }
         passed, eligible, rows = self.display_rows()
         data = {
+            "successes_per_type": self.success_target,
             "workers": self.workers,
             "sampled_at": self.sampled_at,
             "outstanding": self.outstanding,
@@ -652,7 +660,7 @@ class ReplayController:
             return self.snapshot()
         data = self.snapshot()
         data["coverage_definition"] = (
-            "At least one observed successful replay per eligible name/scope variant observed during this session; "
+            f"At least {self.success_target} observed successful replay(s) per eligible name/scope variant observed during this session; "
             "includes session successes across restarts, not worker-image or per-worker coverage. "
             "Discovery uses bounded recent source history."
         )
@@ -713,7 +721,7 @@ class ReplayController:
         return Group(
             Text(
                 f"Active workers: {self.workers} | Outstanding: {self.outstanding}/{self.limit} | "
-                f"{'★ Full coverage' if full else 'Coverage'}: {passed}/{eligible} eligible types | "
+                f"{'★ Full coverage' if full else 'Coverage'}: {passed}/{eligible} eligible types | Target: {self.success_target} successes/type | "
                 f"{len(self.known_jobs) - eligible} excluded",
                 style="bold green" if full else "",
             ),
