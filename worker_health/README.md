@@ -128,6 +128,55 @@ details. Dry-run mode allows inspecting their previews.
 
 ## overview
 
+### tc_task.py
+
+Inspect one or more Taskcluster tasks, showing the latest run's state, worker,
+timestamps, duration, and total run count. Optionally fetch the task log or
+filter its lines with a regular expression.
+
+```bash
+# Inspect one or more tasks
+pipenv run python ./tc_task.py TASK_ID [TASK_ID ...]
+
+# Fetch the latest run's log
+pipenv run python ./tc_task.py TASK_ID --logs
+
+# Filter log lines (implies --logs)
+pipenv run python ./tc_task.py TASK_ID --grep 'ERROR|FAIL'
+
+# Fetch a specific run's log (run IDs are zero-based)
+pipenv run python ./tc_task.py TASK_ID --run 0 --logs
+
+# Print results as JSON
+pipenv run python ./tc_task.py TASK_ID --json
+
+# Inspect a run using its Taskcluster URL
+pipenv run python ./tc_task.py \
+  https://firefox-ci-tc.services.mozilla.com/tasks/TASK_ID/runs/0
+
+# Fetch a private text log using ~/.tc_token
+pipenv run python ./tc_task.py TASK_ID --auth --artifact private/logs/example.log
+```
+
+Requests are anonymous by default. Add `--auth` to read `clientId` and
+`accessToken` from `~/.tc_token` and sign artifact requests. The client needs
+`queue:get-artifact:<artifact-path>` permission for private artifacts. Missing
+or invalid credentials with `--auth` produce an error; anonymous use never reads
+the token file.
+
+Log fetching defaults to `public/logs/live_backing.log`. `--artifact PATH`
+selects another text artifact and implies `--logs`. `--grep` filters either
+artifact. `--run` selects the run for both the summary and log, overriding a run
+ID in the URL; otherwise the URL's run or the latest run is used. Tasks with no
+runs still show their task state, but cannot provide a log.
+
+JSON output is always an array, including for one task or no successful lookups
+(`[]`). Lookup failures are reported on stderr and omitted from the array; log
+failures retain the summary with a `log_error` field. Other tasks continue after
+a failure. Exit status is 0 on success, 1 for lookup, credential, or log failures,
+and 2 for invalid arguments. Invalid regexes and negative run IDs are rejected
+before making requests.
+
 ### create_tc_task.py
 
 Submit test tasks to a Taskcluster worker queue. By default, each task sleeps
