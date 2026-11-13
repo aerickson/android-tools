@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import taskcluster
-from replay_tc_task import positive_int, queue_argument, queue_client
+from replay_tc_task import positive_int, queue_argument, queue_client, task_id_argument
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
@@ -26,6 +26,7 @@ from worker_health.replay_dashboard import Dashboard, LogBuffer, run_dashboard
 from worker_health.replay_report import ReplayReport
 from worker_health.replay_session_picker import pick_session
 from worker_health.replay_sessions import create_session, list_sessions, load_session, write_json
+from worker_health.replay_targets import TargetedReplayController, configure_targets
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,25 @@ def parse_args():
 """,
     )
     parser.add_argument("--from-pool", type=queue_argument, help="Source pool ID or worker pool URL")
+    parser.add_argument(
+        "--task-id",
+        action="append",
+        type=task_id_argument,
+        default=[],
+        help="Fixed source task (repeatable)",
+    )
+    parser.add_argument("--task-id-file", type=Path, help="UTF-8 file with one source task ID per line")
+    parser.add_argument(
+        "--attempts-per-target",
+        type=positive_int,
+        help="Total submissions per source task, including the first",
+    )
+    parser.add_argument(
+        "--stop-after-success",
+        action="store_true",
+        default=None,
+        help="Smoke mode: stop each target after its first success, within its attempt cap",
+    )
     parser.add_argument(
         "-q",
         "--queue",
@@ -126,6 +146,28 @@ def parse_args():
     )
     parser.add_argument("--report", help="Additional JSON report copy (default report stays in the session directory)")
     args = parser.parse_args()
+    try:
+        if args.task_id_file:
+            args.task_id.extend(
+                task_id_argument(line.strip()) for line in args.task_id_file.read_text().splitlines() if line.strip()
+            )
+    except (OSError, ValueError, argparse.ArgumentTypeError) as exc:
+        parser.error(str(exc))
+    args.task_ids = list(dict.fromkeys(args.task_id))
+    if args.task_id_file and not args.task_ids:
+        parser.error("Task ID file must select at least one source task")
+    if args.task_ids and (not args.from_pool or args.session):
+        parser.error("Task selection requires --from-pool and --queue; resume fixed targets using --session")
+    if args.task_ids and args.attempts_per_target is None:
+        parser.error("Task selection requires --attempts-per-target (total submissions, including the first)")
+    if not args.task_ids and (args.attempts_per_target is not None or args.stop_after_success is not None):
+        parser.error("--attempts-per-target and --stop-after-success require task selection")
+    if args.task_ids and args.resume:
+        parser.error("Resume fixed targets using --session PATH --resume")
+    if args.task_ids and (
+        args.successes_per_type is not None or args.exit_on_full_coverage or not args.stop_on_full_coverage
+    ):
+        parser.error("Targeted sessions use their attempt cap and --stop-after-success instead of coverage controls")
     if bool(args.from_pool) != bool(args.queue):
         parser.error("--from-pool and --queue must be supplied together")
     if args.from_pool and args.from_pool == args.queue:
@@ -159,15 +201,18 @@ def select_session(args, interactive):
         matching = [
             session
             for session in list_sessions()
-            if session.source == args.from_pool and session.destination == args.queue
+            if session.source == args.from_pool
+            and session.destination == args.queue
+            and not session.configuration().get("targets")
         ]
-        existing = bool(matching) and not args.new_session
+        existing = bool(matching) and not args.new_session and not args.task_ids
         if existing:
             session = matching[0]
         else:
             if args.resume:
                 raise ValueError("No matching session to resume; use --new-session to start one")
             session = create_session(args.from_pool, args.queue)
+    configure_targets(args, session, existing)
     if args.successes_per_type is None:
         args.successes_per_type = session.report().get("successes_per_type", 1)
     args.view_only = existing and not args.resume
@@ -214,7 +259,8 @@ def run_controller(args, console, stop=None, publish=None):
             data = dict(report.latest)
             logger.info("Coverage report: %s", report.path)
             queue = queue_client(authenticated=True)
-            controller = ReplayController(
+            controller_type = TargetedReplayController if getattr(args, "task_ids", []) else ReplayController
+            controller = controller_type(
                 queue,
                 taskcluster.WorkerManager(queue.options),
                 taskcluster.Auth(queue.options),
@@ -279,7 +325,7 @@ def run_controller(args, console, stop=None, publish=None):
                         extra={"replay_summary": summary},
                     )
                     if not failed and controller.exit_ready:
-                        reason = "full_coverage"
+                        reason = "targeted_batch_finished" if getattr(args, "task_ids", []) else "full_coverage"
                         break
                     if args.once:
                         reason = "cycle_failed" if failed else "once"
@@ -305,7 +351,9 @@ def run_controller(args, console, stop=None, publish=None):
                 report.write(data, exit_reason=reason)
                 logger.info("Coverage report: %s (%s)", report.path, reason)
                 args.replay_exit_summary = (
-                    f"★ Full coverage: {data['passed']}/{data['eligible']} eligible types. "
+                    "Targeted replay batch finished. "
+                    if reason == "targeted_batch_finished"
+                    else f"★ Full coverage: {data['passed']}/{data['eligible']} eligible types. "
                     if reason == "full_coverage"
                     else "Stopped scheduling; submitted tasks keep running. "
                 ) + f"Report: {report.path}"

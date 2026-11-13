@@ -844,3 +844,202 @@ def test_raise_success_target_runs_another_sweep_and_pauses(setup):
     assert instance.paused
     assert instance.report()["successes_per_type"] == 2
     assert instance.report()["passed"] == len(jobs)
+
+
+def targeted_controller(instance, jobs, attempts=3, smoke=False):
+    from worker_health.replay_targets import TargetedReplayController
+
+    instance.args.task_ids = [job.task_id for job in jobs]
+    instance.args.attempts_per_target = attempts
+    instance.args.stop_after_success = smoke
+    instance.queue.status.return_value = {"status": {"state": "completed"}}
+    return TargetedReplayController(
+        instance.queue,
+        instance.manager,
+        instance.auth,
+        instance.state,
+        instance.args,
+        clock=instance.clock,
+    )
+
+
+def test_targeted_fixed_count_continues_after_success_and_survives_restart(setup):
+    instance, jobs = setup
+    instance = targeted_controller(instance, jobs[:1])
+    for cycle in range(3):
+        instance.clock = lambda cycle=cycle: NOW + timedelta(minutes=cycle)
+        instance.tick()
+    assert instance.queue.createTask.call_count == 3
+    saved_payload = deepcopy(jobs[0].task["payload"])
+    jobs[0].task["payload"] = {"changed": True}
+    resumed = targeted_controller(instance, jobs[:1])
+    resumed.clock = lambda: NOW + timedelta(minutes=4)
+    resumed.queue.task.reset_mock()
+    resumed.tick()
+    assert resumed.exit_ready
+    assert resumed.queue.createTask.call_count == 3
+    resumed.queue.task.assert_not_called()
+    assert resumed.jobs[0].task["payload"] == saved_payload
+    assert resumed.report()["targets"]["maximum_submissions"] == 3
+    assert len(resumed.report()["rows"][0]["tasks"]) == 3
+    controller.load_discovery.assert_not_called()
+
+
+def test_targeted_same_variant_keeps_both_source_ids(setup):
+    instance, jobs = setup
+    jobs[1].task = deepcopy(jobs[0].task)
+    instance = targeted_controller(instance, jobs[:2], attempts=1)
+    instance.tick()
+    instance.clock = lambda: NOW + timedelta(minutes=1)
+    instance.tick()
+    instance.clock = lambda: NOW + timedelta(minutes=2)
+    instance.tick()
+    assert instance.exit_ready
+    assert {call.args[1]["extra"]["replay"]["sourceTaskId"] for call in instance.queue.createTask.call_args_list} == {
+        job.task_id for job in jobs[:2]
+    }
+    assert len(instance.report()["rows"]) == 2
+
+
+def test_targeted_smoke_stops_at_first_success(setup):
+    instance, jobs = setup
+    instance = targeted_controller(instance, jobs[:1], smoke=True)
+    instance.tick()
+    instance.tick(NOW + timedelta(minutes=1))
+    assert instance.exit_ready
+    assert instance.queue.createTask.call_count == 1
+
+
+def test_targeted_waits_for_final_result(setup):
+    instance, jobs = setup
+    instance = targeted_controller(instance, jobs[:1], attempts=1)
+    instance.tick()
+    instance.queue.status.return_value = {"status": {"state": "running"}}
+    instance.tick(NOW + timedelta(minutes=1))
+    assert not instance.exit_ready
+    assert "waiting" in instance.message
+    instance.queue.status.return_value = {"status": {"state": "failed"}}
+    instance.tick(NOW + timedelta(minutes=2))
+    assert instance.exit_ready
+    assert instance.queue.createTask.call_count == 1
+
+
+def test_targeted_uncertain_submission_reuses_id_at_cap(setup):
+    instance, jobs = setup
+    instance = targeted_controller(instance, jobs[:1], attempts=1)
+    instance.queue.createTask.side_effect = rest_error(500)
+    with pytest.raises(taskcluster.exceptions.TaskclusterRestFailure):
+        instance.tick()
+    instance.queue.createTask.side_effect = None
+    instance.queue.status.side_effect = rest_error(404)
+    instance.clock = lambda: NOW + timedelta(minutes=1)
+    instance.tick()
+    calls = instance.queue.createTask.call_args_list
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert instance.submission_count(instance.job_key(jobs[0])) == 1
+
+
+def test_targeted_preflight_error_does_not_consume_submission_budget(setup):
+    instance, jobs = setup
+    instance = targeted_controller(instance, jobs[:1], attempts=1)
+    controller.check_inputs.side_effect = ValueError("temporary input problem")
+    instance.tick()
+    assert instance.submission_count(instance.job_key(jobs[0])) == 0
+    assert instance.state.history(instance.job_key(jobs[0]))["attempts"] == 0
+    controller.check_inputs.side_effect = None
+    instance.clock = lambda: NOW + timedelta(minutes=6)
+    instance.tick()
+    assert instance.queue.createTask.call_count == 1
+
+
+@pytest.mark.parametrize("bad", ["pool", "level", "state"])
+def test_targeted_invalid_source_stops_before_any_submission(setup, bad):
+    instance, jobs = setup
+    instance = targeted_controller(instance, jobs[:2])
+    if bad == "pool":
+        jobs[1].task["taskQueueId"] = DESTINATION
+    elif bad == "level":
+        jobs[1].task["payload"]["env"]["MOZ_SCM_LEVEL"] = "3"
+    else:
+        instance.queue.status.return_value = {"status": {"state": "failed"}}
+    with pytest.raises(ValueError):
+        instance.tick()
+    instance.queue.createTask.assert_not_called()
+    assert not instance.state.active()
+
+
+def test_targeted_retains_all_runs_and_unknown_version_without_log(mocker, setup):
+    instance, jobs = setup
+    instance = targeted_controller(instance, jobs[:1], attempts=1)
+    instance.tick()
+    collect = mocker.patch("worker_health.replay_targets.collect_log_evidence")
+    instance.queue.status.return_value = {
+        "status": {
+            "state": "failed",
+            "runs": [
+                {"runId": 0, "workerId": "ms017", "workerGroup": "g", "state": "exception"},
+                {"runId": 1, "workerId": "ms018", "workerGroup": "g", "state": "failed"},
+            ],
+        },
+    }
+    instance.tick(NOW + timedelta(minutes=1))
+    runs = instance.report()["rows"][0]["tasks"][0]["runs"]
+    assert [run["worker_id"] for run in runs] == ["ms017", "ms018"]
+    assert all(run["verified_worker_version"] == "unknown" for run in runs)
+    assert collect.call_count == 2
+    resumed = targeted_controller(instance, jobs[:1], attempts=1)
+    assert resumed.report()["rows"][0]["tasks"][0]["runs"] == runs
+
+
+def test_targeted_cli_preview_dry_run_then_resume_keeps_cap(mocker, setup, tmp_path, caplog):
+    instance, jobs = setup
+    mocker.patch.dict("os.environ", {"XDG_STATE_HOME": str(tmp_path)})
+    instance.manager.listWorkers.return_value = {"workers": [worker(lastDateActive=datetime.now(UTC).isoformat())]}
+    instance.queue.status.return_value = {"status": {"state": "completed"}}
+    mocker.patch.object(cli, "queue_client", return_value=instance.queue)
+    mocker.patch.object(cli.taskcluster, "WorkerManager", return_value=instance.manager)
+    mocker.patch.object(cli.taskcluster, "Auth", return_value=instance.auth)
+    command = [
+        "replay_tc_pool.py",
+        "--from-pool",
+        SOURCE,
+        "--queue",
+        DESTINATION,
+        "--task-id",
+        jobs[0].task_id,
+        "--attempts-per-target",
+        "1",
+        "--dry-run",
+        "--once",
+        "--output",
+        "log",
+    ]
+    mocker.patch("sys.argv", command)
+    with caplog.at_level("INFO"):
+        assert cli.main() == 0
+    assert "Targeted replay preview" in caplog.text
+    assert "Maximum submissions: 1" in caplog.text
+    instance.queue.createTask.assert_not_called()
+    from worker_health.replay_sessions import list_sessions
+
+    session = list_sessions()[0]
+    assert session.report()["targets"]["attempts_per_target"] == 1
+    mocker.patch(
+        "sys.argv",
+        [
+            "replay_tc_pool.py",
+            "--session",
+            str(session.path),
+            "--resume",
+            "--submit-on-start",
+            "--once",
+            "--output",
+            "log",
+        ],
+    )
+    assert cli.main() == 0
+    assert instance.queue.createTask.call_count == 1
+    assert cli.main() == 0
+    assert instance.queue.createTask.call_count == 1
+    assert session.report()["exit_reason"] == "targeted_batch_finished"

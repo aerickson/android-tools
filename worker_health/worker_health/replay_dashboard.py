@@ -256,13 +256,17 @@ class Dashboard:
                     )
                     if getattr(self.args, "replay_wake", None):
                         self.args.replay_wake.set()
-                if not viewing and key in (ord("f"), ord("F"), ord("e"), ord("E")):
+                if (
+                    not viewing
+                    and not getattr(self.args, "task_ids", [])
+                    and key in (ord("f"), ord("F"), ord("e"), ord("E"))
+                ):
                     setting = "stop_on_full_coverage" if key in (ord("f"), ord("F")) else "exit_on_full_coverage"
                     setattr(self.args, setting, not getattr(self.args, setting, setting == "stop_on_full_coverage"))
                     logging.getLogger(__name__).info("%s: %s", setting, getattr(self.args, setting))
                     if getattr(self.args, "replay_wake", None):
                         self.args.replay_wake.set()
-                if not viewing and key == ord("+"):
+                if not viewing and not getattr(self.args, "task_ids", []) and key == ord("+"):
                     self.args.successes_per_type = (getattr(self.args, "successes_per_type", None) or 1) + 1
                     logging.getLogger(__name__).info(
                         "Success target raised to %s per type",
@@ -344,11 +348,18 @@ class Dashboard:
         task_height, log_height = self.dimensions(height, width, len(header))
         for y, text in enumerate(header):
             line(y, text, curses.A_BOLD)
+        target_summary = (
+            f"Fixed batch: {len(self.args.task_ids)} targets | "
+            f"{self.args.attempts_per_target} total submissions/target | "
+            f"{snapshot.get('passed', 0)} targets passed"
+            if getattr(self.args, "task_ids", [])
+            else f"{'★ Full coverage' if snapshot.get('full_coverage') else 'Coverage'}: "
+            f"{snapshot.get('passed', 0)}/{snapshot.get('eligible', 0)} eligible types | Target: {snapshot.get('successes_per_type', 1)} successes/type | {snapshot.get('excluded', 0)} excluded"
+        )
         line(
             len(header),
             f"Workers: {snapshot.get('workers', 0)} | Outstanding: {snapshot.get('outstanding', 0)}/{snapshot.get('limit', 0)} | "
-            f"{'★ Full coverage' if snapshot.get('full_coverage') else 'Coverage'}: "
-            f"{snapshot.get('passed', 0)}/{snapshot.get('eligible', 0)} eligible types | Target: {snapshot.get('successes_per_type', 1)} successes/type | {snapshot.get('excluded', 0)} excluded",
+            + target_summary,
             self.colors.get(1, 0) | curses.A_BOLD if snapshot.get("full_coverage") else 0,
         )
         by_key = {row["key"]: row for row in snapshot.get("rows", [])}
@@ -511,6 +522,9 @@ class Dashboard:
                 ("E: Exit covered" if width >= 110 else "E: Exit", getattr(self.args, "exit_on_full_coverage", False)),
             )
             segments = [("+: Raise target | ", False)]
+            if getattr(self.args, "task_ids", []):
+                settings = (("S: Submit", enabled),)
+                segments = [(f"Fixed batch: {self.args.attempts_per_target} submissions/target", False)]
             for label, on in settings:
                 if segments:
                     segments.append((" | ", False))

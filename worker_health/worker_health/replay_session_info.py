@@ -34,8 +34,10 @@ def current_invocation(args, snapshot):
         command.extend(["--from-pool", args.from_pool, "--queue", args.queue])
     if not viewing and getattr(args, "submissions_enabled", False):
         command.append("--submit-on-start")
-    for name, default in (("stop_on_full_coverage", True), ("exit_on_full_coverage", False)):
-        command.append("--" + ("" if getattr(args, name, default) else "no-") + name.replace("_", "-"))
+    targeted = bool(getattr(args, "task_ids", []))
+    if not targeted:
+        for name, default in (("stop_on_full_coverage", True), ("exit_on_full_coverage", False)):
+            command.append("--" + ("" if getattr(args, name, default) else "no-") + name.replace("_", "-"))
     for name in (
         "successes_per_type",
         "worker_active_minutes",
@@ -47,6 +49,8 @@ def current_invocation(args, snapshot):
         "output",
     ):
         value = getattr(args, name, None)
+        if targeted and name == "successes_per_type":
+            continue
         if value is not None:
             command.extend(["--" + name.replace("_", "-"), str(value)])
     for name in ("dry_run", "once"):

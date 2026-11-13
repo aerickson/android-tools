@@ -431,3 +431,27 @@ def test_plus_raises_success_target_and_wakes_scheduler(mocker):
     view.screen(screen)
     assert args.successes_per_type == 2
     assert args.replay_wake.is_set()
+
+
+def test_targeted_dashboard_cannot_change_fixed_batch_policy(mocker):
+    args = SimpleNamespace(
+        from_pool="source/pool",
+        queue="target/pool",
+        task_ids=["A" * 22],
+        attempts_per_target=3,
+        stop_on_full_coverage=False,
+        exit_on_full_coverage=False,
+        successes_per_type=1,
+        replay_wake=threading.Event(),
+    )
+    view = Dashboard(args, LogBuffer(), dict, threading.Event(), threading.Event())
+    mocker.patch("curses.curs_set")
+    mocker.patch("curses.has_colors", return_value=False)
+    screen = mocker.Mock()
+    screen.getmaxyx.return_value = (30, 180)
+    screen.getch.side_effect = [ord("f"), ord("e"), ord("+"), ord("q")]
+    view.screen(screen)
+    assert not args.stop_on_full_coverage
+    assert not args.exit_on_full_coverage
+    assert args.successes_per_type == 1
+    assert args.attempts_per_target == 3

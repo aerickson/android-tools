@@ -66,6 +66,9 @@ class ReplaySession:
             raise TypeError(f"Invalid report: {self.report_path}")
         return data
 
+    def configuration(self):
+        return json.loads((self.path / "session.json").read_text())
+
     def sampled_at(self):
         return self.report().get("sampled_at")
 

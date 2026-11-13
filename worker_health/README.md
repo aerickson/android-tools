@@ -663,3 +663,58 @@ settings. Existing results remain in the session. Submissions must be enabled
 with **S** or `--submit-on-start`; raising the target preserves that setting.
 The target is saved in the session report and restored on resume. Use
 `--successes-per-type 2` to set it explicitly from the command line.
+
+#### Targeted replay batches
+
+Use the existing pool replay command to replay fixed source task IDs. This
+creates a separate session each time; it neither imports broad coverage nor
+replaces selected sources with newer tasks from worker history.
+
+```bash
+pipenv run python ./replay_tc_pool.py \
+  --from-pool PROVISIONER/SOURCE_POOL --queue PROVISIONER/DESTINATION_POOL \
+  --task-id SOURCE_TASK_A --task-id SOURCE_TASK_B \
+  --attempts-per-target 3 --dry-run --once --output log
+```
+
+Replace the example pools and IDs with real values. Alternatively, use
+`--task-id-file tasks.txt` containing one task ID per line (blank lines are
+ignored). Flags and file entries can be combined; duplicate IDs are counted
+once. Sources must be completed level-1 tasks belonging to `--from-pool`.
+A task/run URL selects the task definition, not historical run-specific inputs.
+
+`--attempts-per-target 3` permits **three total submissions per source task**,
+including the first submission. Successful tasks still receive their remaining
+attempts. Add `--stop-after-success` for a smoke check that stops each source
+after its first success, within the same cap. Selected tasks with identical
+names and scopes remain separate targets. Preflight failures do not consume
+the cap; reserved submissions count toward it, and uncertain responses reuse
+the same task ID. Capacity, scopes, rate limits, input checks, and failure
+backoff work as in broad replay mode. Expired sources remain fixed and require
+a new batch with valid sources.
+
+The preview lists source IDs and names, destination, and maximum submissions
+before scheduling. New sessions start paused; enable submissions using the
+existing S key or `--submit-on-start` only when the intended submission batch
+has been authorized. `--dry-run` never submits. A bounded batch exits after all
+targets reach their cap (or smoke success) and all submitted tasks resolve.
+`--once` still performs only one scheduling cycle.
+
+Resume with the printed `--session PATH --resume` command. Selection, attempt
+cap, smoke mode, and saved source definitions survive restarts; attempts are
+not reset. Coverage controls and their dashboard hotkeys do not alter targeted
+batches. Pool-only session lookup continues to select broad coverage sessions;
+use an explicit session path to view or resume a targeted batch.
+
+The JSON report retains every submitted task, all observed run IDs, actual
+worker group/ID, state, resolution reason, and evidence sources. Terminal runs
+sample up to the first 4 MiB of `public/logs/live_backing.log`; truncation and
+unavailable logs are recorded. Failure signatures are up to ten matching error
+lines, with their artifact URL, and are `unknown` when no evidence is found.
+Image version verification requires an explicit execution-log banner
+`[taskcluster] Worker Image Version: VERSION`, whose line and artifact URL are
+retained. Other log formats, generic-worker binary versions, and destination
+pool suffixes do not establish the image version. Expected and verified image
+versions remain `unknown` without applicable evidence; this implementation does
+not infer versions from pool names. Results describe the selected batch and do
+not establish coverage of the whole pool or every worker.

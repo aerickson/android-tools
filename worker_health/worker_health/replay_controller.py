@@ -109,6 +109,7 @@ class ControllerState:
                     state TEXT NOT NULL, created REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS observations (task_id TEXT PRIMARY KEY, evidence TEXT NOT NULL);
             """)
             columns = {row[1] for row in self.db.execute("PRAGMA table_info(workloads)")}
             if "source_task_id" not in columns:
@@ -237,6 +238,25 @@ class ReplayController:
         full = bool(self.coverage_confirmed and eligible and passed == eligible)
         return passed, eligible, full
 
+    def job_key(self, job):
+        return workload_key(self.args.from_pool, job)
+
+    def refresh_sources(self, now):
+        discovery = load_discovery(self.args.from_pool, self.args.source_refresh_minutes)
+        if discovery is None:
+            discovery = discover_jobs(self.queue, self.manager, self.args.from_pool, progress=self.progress)
+            save_discovery(self.args.from_pool, discovery)
+        for job in discovery.jobs:
+            key = self.job_key(job)
+            self.state.ensure_job(key, job.name, last_seen=now.isoformat())
+            self.state.remember_source(key, job)
+        self.jobs = discovery.jobs
+        self.discovery = discovery
+        self.last_discovery = now
+
+    def candidate_allowed(self, key, history):
+        return not (getattr(self.args, "stop_on_full_coverage", True) and history["successes"] >= self.success_target)
+
     def update_coverage(self):
         passed, eligible, full = self.coverage_state()
         if full and not self.full_coverage:
@@ -260,10 +280,10 @@ class ReplayController:
             for row in self.state.active()
         }
         self.active_types = set(self.active_tasks)
-        current = {workload_key(self.args.from_pool, job): job for job in self.jobs}
+        current = {self.job_key(job): job for job in self.jobs}
         self.known_jobs = {}
         for key, history in self.histories.items():
-            source, name, scopes = json.loads(key)
+            source, name, scopes = json.loads(key)[:3]
             if source == self.args.from_pool:
                 saved = ReplayJob(**json.loads(history["source_job"])) if history.get("source_job") else None
                 self.known_jobs[key] = (
@@ -309,12 +329,16 @@ class ReplayController:
             state = status["state"]
             if state not in (*ACTIVE, *TERMINAL):
                 raise ValueError(f"Unknown task state: {state}")
+            self.record_observation(row, status)
             self.state.set_status(row, state, now.timestamp(), self.args.failure_backoff)
             latest_run = status.get("runs", [])[-1] if status.get("runs") else {}
             self.observed_statuses[row["task_id"]] = {"started": latest_run.get("started")}
             if state in TERMINAL:
                 self.observed_statuses.pop(row["task_id"], None)
                 remember_results(self.args.queue, {row["task_id"]: {"state": state}})
+
+    def record_observation(self, row, status):
+        pass
 
     def submit(self, row, now):
         if self.stop_requested() or not getattr(self.args, "submissions_enabled", False):
@@ -349,17 +373,7 @@ class ReplayController:
             self.last_discovery is None
             or (now - self.last_discovery).total_seconds() >= self.args.source_refresh_minutes * 60
         ):
-            discovery = load_discovery(self.args.from_pool, self.args.source_refresh_minutes)
-            if discovery is None:
-                discovery = discover_jobs(self.queue, self.manager, self.args.from_pool, progress=self.progress)
-                save_discovery(self.args.from_pool, discovery)
-            for job in discovery.jobs:
-                key = workload_key(self.args.from_pool, job)
-                self.state.ensure_job(key, job.name, last_seen=now.isoformat())
-                self.state.remember_source(key, job)
-            self.jobs = discovery.jobs
-            self.discovery = discovery
-            self.last_discovery = now
+            self.refresh_sources(now)
         self.refresh_view()
         self.view_ready = True
         self.coverage_confirmed = (
@@ -426,15 +440,13 @@ class ReplayController:
         active_types = {row["workload"] for row in self.state.active()}
         candidates = []
         for job in self.known_jobs.values():
-            key = workload_key(self.args.from_pool, job)
+            key = self.job_key(job)
             history = self.state.history(key)
             if (
                 key not in active_types
                 and "payload" in job.task
                 and history["expired_source_id"] != job.task_id
-                and not (
-                    getattr(self.args, "stop_on_full_coverage", True) and history["successes"] >= self.success_target
-                )
+                and self.candidate_allowed(key, history)
                 and history["retry_after"] <= now.timestamp()
                 and not missing_scopes(job.task, self.args.queue, self.granted)
             ):
@@ -445,10 +457,7 @@ class ReplayController:
             self.progress(f"Checking inputs: {job.name}")
             try:
                 source = job.task
-                if (
-                    source_queue(source) != self.args.from_pool
-                    or workload_key(self.args.from_pool, replace(job, task=source)) != key
-                ):
+                if source_queue(source) != self.args.from_pool or self.job_key(replace(job, task=source)) != key:
                     raise ValueError("Source pool or workload identity changed")
                 denied = missing_scopes(source, self.args.queue, self.granted)
                 if denied:
@@ -466,7 +475,13 @@ class ReplayController:
             except (ValueError, KeyError, taskcluster.exceptions.TaskclusterFailure) as exc:
                 if not self.args.dry_run:
                     with self.state.db:
-                        self.state.reject(key, exc, now.timestamp(), self.args.failure_backoff)
+                        self.state.reject(
+                            key,
+                            exc,
+                            now.timestamp(),
+                            self.args.failure_backoff,
+                            attempted=not bool(getattr(self.args, "task_ids", [])),
+                        )
                         if isinstance(exc, ExpiredReplayInputs) or (
                             isinstance(exc, taskcluster.exceptions.TaskclusterRestFailure) and exc.status_code == 404
                         ):
@@ -529,7 +544,7 @@ class ReplayController:
         passed = eligible = 0
         now = self.clock().timestamp()
         rows = []
-        current_keys = {workload_key(self.args.from_pool, job) for job in self.jobs}
+        current_keys = {self.job_key(job) for job in self.jobs}
         for key, job in self.known_jobs.items():
             history = self.histories.get(key, {"successes": 0, "attempts": 0, "retry_after": 0})
             denied = missing_scopes(job.task, self.args.queue, self.granted)
@@ -638,7 +653,7 @@ class ReplayController:
                     "status": status.plain,
                     "elapsed": elapsed.plain,
                     "observed_at": self.clock().timestamp(),
-                    "source_present": key in {workload_key(self.args.from_pool, job) for job in self.jobs},
+                    "source_present": key in {self.job_key(job) for job in self.jobs},
                     "last_seen": self.histories.get(key, {}).get("last_seen"),
                     "missing_scopes": missing_scopes(self.known_jobs[key].task, self.args.queue, self.granted),
                 }
