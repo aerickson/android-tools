@@ -33,118 +33,167 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description=__doc__,
+        usage="%(prog)s [--from-pool POOL --queue POOL | --session PATH] [options]",
+        description="""Monitor replay of completed level-1 Taskcluster workloads.
+
+With no arguments in a terminal, open the session picker.
+Pool arguments open the latest matching session or start monitoring if none exists.
+New and resumed sessions start with submissions paused. Press S in the dashboard
+or pass --submit-on-start to enable submissions.""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Credentials and likely required scopes:
-  Active monitoring reads ~/.tc_token, including with --dry-run.
-  Viewing an existing session is offline and does not read credentials.
+        epilog="""Examples (arguments to %(prog)s):
+  --from-pool SRC --queue DST --new-session
+      Start fresh coverage for a pool pair.
+  --session PATH
+      View a saved report offline.
+  --session PATH --resume --dry-run --once
+      Validate one monitoring cycle for a saved session without submitting.
 
-  Submission scopes (replace DESTINATION with the pool passed to --queue):
-    queue:create-task:lowest:DESTINATION
-    queue:create-task:project:none
-    queue:scheduler-id:-
-
-  Example destination scope:
-    queue:create-task:lowest:releng-hardware/gecko-t-linux-talos-2404-tc-v115
-
-  Common level-1 Talos/Browsertime source scopes (workload dependent):
-    secrets:get:project/perftest/gecko/level-1/*
-    secrets:get:project/releng/gecko/build/level-1/*
-    generic-worker:cache:gecko-level-1-*
-    queue:get-artifact:project/gecko/*
-
-  Effective client scopes must also cover every scope requested by each source
-  task. Jobs with missing scopes are skipped. Broader existing grants can cover
-  the submission scopes above. The artifact wildcard spans SCM levels; replay
-  still accepts only level-1 sources. See README.md, Replay client scopes.
+Active monitoring reads ~/.tc_token, including with --dry-run. Saved-session
+viewing works offline. See "Replay client scopes" in README.md for scope details.
 """,
     )
-    parser.add_argument("--from-pool", type=queue_argument, help="Source pool ID or worker pool URL")
-    parser.add_argument(
+
+    sessions = parser.add_argument_group("Sessions and pools")
+    sessions.add_argument("--from-pool", type=queue_argument, metavar="POOL", help="Source pool ID or worker pool URL")
+    sessions.add_argument(
+        "-q",
+        "--queue",
+        type=queue_argument,
+        metavar="POOL",
+        help="Destination pool ID or worker pool URL",
+    )
+    sessions.add_argument("--session", metavar="PATH", help="Open a session directory or its report.json")
+    sessions.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume monitoring the selected or latest matching session",
+    )
+    sessions.add_argument(
+        "--new-session",
+        action="store_true",
+        help="Start fresh session coverage for the specified pools",
+    )
+    sessions.add_argument(
+        "--submit-on-start",
+        action="store_true",
+        help="Enable submissions immediately in a new or resumed session",
+    )
+
+    targets = parser.add_argument_group(
+        "Fixed-task replay",
+        description="Use --task-id or --task-id-file with both pool flags and --attempts-per-target.",
+    )
+    targets.add_argument(
         "--task-id",
         action="append",
         type=task_id_argument,
         default=[],
         help="Fixed source task (repeatable)",
     )
-    parser.add_argument("--task-id-file", type=Path, help="UTF-8 file with one source task ID per line")
-    parser.add_argument(
+    targets.add_argument(
+        "--task-id-file",
+        type=Path,
+        metavar="PATH",
+        help="UTF-8 file with one source task ID per line",
+    )
+    targets.add_argument(
         "--attempts-per-target",
+        metavar="COUNT",
         type=positive_int,
         help="Total submissions per source task, including the first",
     )
-    parser.add_argument(
+    targets.add_argument(
         "--stop-after-success",
         action="store_true",
         default=None,
         help="Smoke mode: stop each target after its first success, within its attempt cap",
     )
-    parser.add_argument(
-        "-q",
-        "--queue",
-        type=queue_argument,
-        help="Destination pool ID or worker pool URL",
-    )
-    parser.add_argument("--worker-active-minutes", type=positive_int, default=90)
-    parser.add_argument(
-        "--tasks-per-worker",
-        type=positive_int,
-        default=1,
-        help="Maximum outstanding tasks per active worker",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=positive_int,
-        default=60,
-        help="Seconds between scheduling cycles (default: 60)",
-    )
-    parser.add_argument(
-        "--submit-interval",
-        type=positive_int,
-        default=60,
-        help="Minimum seconds between submissions (default: 60)",
-    )
-    parser.add_argument("--source-refresh-minutes", type=positive_int, default=10)
-    parser.add_argument(
-        "--failure-backoff",
-        type=positive_int,
-        default=300,
-        help="Initial retry delay in seconds, doubling up to one hour",
-    )
-    parser.add_argument("--dry-run", action="store_true", help="Check permissions and inputs without submitting tasks")
-    parser.add_argument("--once", action="store_true", help="Run one scheduling cycle and exit")
-    parser.add_argument("--output", choices=("table", "log"), default="table")
-    parser.add_argument(
+
+    coverage = parser.add_argument_group("Workload coverage")
+    coverage.add_argument(
         "--stop-on-full-coverage",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Pause submissions while covered; resume for new uncovered types (default: on)",
     )
-    parser.add_argument(
+    coverage.add_argument(
         "--exit-on-full-coverage",
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Write the report and exit when full coverage is confirmed (default: off)",
     )
-    parser.add_argument(
+    coverage.add_argument(
         "--successes-per-type",
+        metavar="COUNT",
         type=positive_int,
         default=None,
         help="Successful replays required per type (default: saved target or 1)",
     )
-    parser.add_argument("--session", help="Session directory (or its report.json) to view")
-    parser.add_argument("--resume", action="store_true", help="Resume monitoring and update an existing session")
-    parser.add_argument(
-        "--new-session",
-        action="store_true",
-        help="Start fresh session coverage for the specified pools",
+
+    scheduling = parser.add_argument_group("Scheduling")
+    scheduling.add_argument(
+        "--worker-active-minutes",
+        metavar="MINUTES",
+        type=positive_int,
+        default=90,
+        help="Count non-quarantined workers active within this window (default: %(default)s)",
     )
-    parser.add_argument(
-        "--submit-on-start",
-        action="store_true",
-        help="Enable submissions immediately in an active session",
+    scheduling.add_argument(
+        "--tasks-per-worker",
+        metavar="COUNT",
+        type=positive_int,
+        default=1,
+        help="Maximum outstanding tasks per active worker (default: %(default)s)",
     )
-    parser.add_argument("--report", help="Additional JSON report copy (default report stays in the session directory)")
+    scheduling.add_argument(
+        "--poll-interval",
+        metavar="SECONDS",
+        type=positive_int,
+        default=60,
+        help="Seconds between scheduling cycles (default: %(default)s)",
+    )
+    scheduling.add_argument(
+        "--submit-interval",
+        metavar="SECONDS",
+        type=positive_int,
+        default=60,
+        help="Minimum seconds between submissions (default: %(default)s)",
+    )
+    scheduling.add_argument(
+        "--source-refresh-minutes",
+        metavar="MINUTES",
+        type=positive_int,
+        default=10,
+        help="Minutes between source history refreshes (default: %(default)s)",
+    )
+    scheduling.add_argument(
+        "--failure-backoff",
+        metavar="SECONDS",
+        type=positive_int,
+        default=300,
+        help="Initial retry delay in seconds (default: %(default)s), doubling up to one hour",
+    )
+    scheduling.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Check permissions and inputs without submitting tasks",
+    )
+    scheduling.add_argument("--once", action="store_true", help="Run one scheduling cycle and exit")
+
+    output = parser.add_argument_group("Output")
+    output.add_argument(
+        "--output",
+        choices=("table", "log"),
+        default="table",
+        help="Display a table dashboard or plain log output (default: %(default)s)",
+    )
+    output.add_argument(
+        "--report",
+        metavar="PATH",
+        help="Additional JSON report copy (default report stays in the session directory)",
+    )
+
     args = parser.parse_args()
     try:
         if args.task_id_file:
