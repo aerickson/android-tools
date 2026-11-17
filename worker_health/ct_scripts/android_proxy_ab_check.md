@@ -61,3 +61,27 @@ Local verification (no device or network):
 ```sh
 pipenv run python tests/test_android_proxy_ab_check.py
 ```
+
+## Rooted LT A55 profile-transfer workaround
+
+The initial diagnostic task
+[eiu-wD_jQ46vxZnmeLshhQ](https://firefox-ci-tc.services.mozilla.com/tasks/eiu-wD_jQ46vxZnmeLshhQ)
+failed before navigation: geckodriver selected sdcard storage and its profile
+transfer returned `fchown failed: Operation not permitted`. The driver log
+confirmed that the device was rooted. All nine browser sessions failed setup;
+the probe did not test either page.
+
+For an approved retry on this rooted configuration, append
+`--android-storage internal` to `--script-args`. This passes the pinned driver's
+supported (deprecated) storage flag, moving temporary profiles from
+`/sdcard/Android/data/org.mozilla.fenix/files/test_root/` to
+`/data/local/tmp/test_root/`. The default remains `auto`; no fallback is applied
+silently. `internal` requires a rooted device and is not a general workaround
+for unrooted Android workers. The actual requested storage and driver command
+are saved to results.json. Verify the selected path in geckodriver.log after
+launch; the fix has only been validated locally until an approved retry runs.
+
+The failure occurring during sdcard profile transfer is confirmed; the specific
+filesystem/ADB cause of the ownership error remains an inference. No chmod,
+chown, rooting, reboot, or persistent device configuration changes are added by
+this workaround. Geckodriver itself performs its normal device setup/cleanup.

@@ -199,6 +199,12 @@ def main():
     parser.add_argument("--activity", default="org.mozilla.fenix.IntentReceiverActivity")
     parser.add_argument("--geckodriver", help="Existing host binary; otherwise download the pinned CI driver")
     parser.add_argument("--geckodriver-url", default=DEFAULT_DRIVER)
+    parser.add_argument(
+        "--android-storage",
+        choices=("auto", "app", "internal", "sdcard"),
+        default="auto",
+        help="Geckodriver profile storage; internal avoids sdcard ownership failures on rooted LT devices",
+    )
     parser.add_argument("--apk-url", help="Optionally install/replace Fenix with this APK before checking")
     parser.add_argument("--ci-apk", action="store_true", help="Install the exact APK from comment 10's job")
     parser.add_argument("--rounds", type=int, default=3)
@@ -216,6 +222,7 @@ def main():
     report = {
         "started": utc(),
         "task_id": os.environ.get("TASK_ID"),
+        "requested_android_storage": args.android_storage,
         "phases": [],
         "scope": "Page navigation/TLS check; not DNS correctness or playback performance",
     }
@@ -270,8 +277,15 @@ def main():
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
             with (output / "geckodriver.log").open("w") as log:
+                driver_command = [driver_path, "--host", "127.0.0.1", "--port", str(port), "--log", "debug"]
+                if args.android_storage != "auto":
+                    # The pinned driver still supports this deprecated flag. LT's
+                    # rooted A55 fails transferring profiles to its sdcard mount.
+                    driver_command += ["--android-storage", args.android_storage]
+                report["driver_command"] = driver_command
+                write_json(output / "results.json", report)
                 process = subprocess.Popen(
-                    [driver_path, "--host", "127.0.0.1", "--port", str(port), "--log", "debug"],
+                    driver_command,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                 )
