@@ -224,8 +224,8 @@ Continuously replay a mix of completed level-1 workloads into another pool:
 
 ```bash
 pipenv run python ./replay_tc_pool.py \
-  --from-pool releng-hardware/gecko-t-linux-talos-2404 \
-  --queue releng-hardware/gecko-t-linux-talos-2404-tc-v115
+  --from releng-hardware/gecko-t-linux-talos-2404 \
+  --to releng-hardware/gecko-t-linux-talos-2404-tc-v115
 ```
 
 With no arguments, the tool opens a local session picker. Sessions are sorted
@@ -236,7 +236,7 @@ Enter views a saved snapshot, R resumes monitoring, and N creates a new session
 
 | Arguments | Behavior |
 | --- | --- |
-| `--from-pool SRC --queue DST` | View the latest matching session, or create a new monitoring session if none exists |
+| `--from SRC --to DST` | View the latest matching session, or create a new monitoring session if none exists |
 | `--session PATH` | View a saved session offline, with no scans, credentials, SQLite writes, or report updates |
 | `--session PATH --resume` | Resume monitoring and update that session, with submissions paused |
 | Pool arguments plus `--resume` | Resume the latest matching session; error if none exists |
@@ -672,7 +672,7 @@ replaces selected sources with newer tasks from worker history.
 
 ```bash
 pipenv run python ./replay_tc_pool.py \
-  --from-pool PROVISIONER/SOURCE_POOL --queue PROVISIONER/DESTINATION_POOL \
+  --from PROVISIONER/SOURCE_POOL --to PROVISIONER/DESTINATION_POOL \
   --task-id SOURCE_TASK_A --task-id SOURCE_TASK_B \
   --attempts-per-target 3 --dry-run --once --output log
 ```
@@ -680,7 +680,7 @@ pipenv run python ./replay_tc_pool.py \
 Replace the example pools and IDs with real values. Alternatively, use
 `--task-id-file tasks.txt` containing one task ID per line (blank lines are
 ignored). Flags and file entries can be combined; duplicate IDs are counted
-once. Sources must be completed level-1 tasks belonging to `--from-pool`.
+once. Sources must be completed level-1 tasks belonging to `--from`.
 A task/run URL selects the task definition, not historical run-specific inputs.
 
 `--attempts-per-target 3` permits **three total submissions per source task**,

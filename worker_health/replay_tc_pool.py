@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        usage="%(prog)s [--from-pool POOL --queue POOL | --session PATH] [options]",
+        usage="%(prog)s [--from POOL --to POOL | --session PATH] [options]",
         description="""Monitor replay of completed level-1 Taskcluster workloads.
 
 With no arguments in a terminal, open the session picker.
@@ -42,7 +42,7 @@ New and resumed sessions start with submissions paused. Press S in the dashboard
 or pass --submit-on-start to enable submissions.""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples (arguments to %(prog)s):
-  --from-pool SRC --queue DST --new-session
+  --from SRC --to DST --new-session
       Start fresh coverage for a pool pair.
   --session PATH
       View a saved report offline.
@@ -56,14 +56,15 @@ viewing works offline. See "Replay client scopes" in README.md for scope details
 
     sessions = parser.add_argument_group("Sessions and pools")
     sessions.add_argument(
-        "--from-pool",
+        "--from",
+        dest="from_pool",
         type=queue_argument,
         metavar="POOL",
         help="Source pool as PROVISIONER/WORKER_TYPE or a Firefox CI worker pool URL",
     )
     sessions.add_argument(
-        "-q",
-        "--queue",
+        "--to",
+        dest="queue",
         type=queue_argument,
         metavar="POOL",
         help="Destination pool as PROVISIONER/WORKER_TYPE or a Firefox CI worker pool URL",
@@ -87,7 +88,7 @@ viewing works offline. See "Replay client scopes" in README.md for scope details
 
     targets = parser.add_argument_group(
         "Fixed-task replay",
-        description="Use --task-id or --task-id-file with both pool flags and --attempts-per-target.",
+        description="Use --task-id or --task-id-file with --from, --to, and --attempts-per-target.",
     )
     targets.add_argument(
         "--task-id",
@@ -211,7 +212,7 @@ viewing works offline. See "Replay client scopes" in README.md for scope details
     if args.task_id_file and not args.task_ids:
         parser.error("Task ID file must select at least one source task")
     if args.task_ids and (not args.from_pool or args.session):
-        parser.error("Task selection requires --from-pool and --queue; resume fixed targets using --session")
+        parser.error("Task selection requires --from and --to; resume fixed targets using --session")
     if args.task_ids and args.attempts_per_target is None:
         parser.error("Task selection requires --attempts-per-target (total submissions, including the first)")
     if not args.task_ids and (args.attempts_per_target is not None or args.stop_after_success is not None):
@@ -223,7 +224,7 @@ viewing works offline. See "Replay client scopes" in README.md for scope details
     ):
         parser.error("Targeted sessions use their attempt cap and --stop-after-success instead of coverage controls")
     if bool(args.from_pool) != bool(args.queue):
-        parser.error("--from-pool and --queue must be supplied together")
+        parser.error("--from and --to must be supplied together")
     if args.from_pool and args.from_pool == args.queue:
         parser.error("Source and destination pools must differ")
     if args.session and (args.from_pool or args.new_session):
@@ -240,7 +241,7 @@ viewing works offline. See "Replay client scopes" in README.md for scope details
 def select_session(args, interactive):
     if not args.session and not args.from_pool:
         if not interactive:
-            raise ValueError("Specify --session PATH or both --from-pool and --queue; the picker requires a terminal")
+            raise ValueError("Specify --session PATH or both --from and --to; the picker requires a terminal")
         choice = pick_session()
         if choice is None:
             return None

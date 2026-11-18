@@ -27,9 +27,9 @@ def test_selection_file_deduplicates_and_persists_independently(mocker, tmp_path
     ids.write_text(f"{TASK}\n\n{'B' * 22}\n{TASK}\n")
     args = arguments(
         mocker,
-        "--from-pool",
+        "--from",
         SOURCE,
-        "--queue",
+        "--to",
         DESTINATION,
         "--task-id",
         TASK,
@@ -54,7 +54,7 @@ def test_selection_file_deduplicates_and_persists_independently(mocker, tmp_path
     command = current_invocation(args, {})
     assert "--successes-per-type" not in command
     assert "--no-stop-on-full-coverage" not in command
-    args = arguments(mocker, "--from-pool", SOURCE, "--queue", DESTINATION)
+    args = arguments(mocker, "--from", SOURCE, "--to", DESTINATION)
     assert cli.select_session(args, False).path == broad.path
 
 
@@ -72,7 +72,7 @@ def test_selection_file_deduplicates_and_persists_independently(mocker, tmp_path
 )
 def test_invalid_selection(mocker, extra):
     with pytest.raises(SystemExit):
-        arguments(mocker, "--from-pool", SOURCE, "--queue", DESTINATION, *extra)
+        arguments(mocker, "--from", SOURCE, "--to", DESTINATION, *extra)
 
 
 def test_invalid_file_fails_before_creating_session(mocker, tmp_path):
@@ -81,9 +81,9 @@ def test_invalid_file_fails_before_creating_session(mocker, tmp_path):
     with pytest.raises(SystemExit):
         arguments(
             mocker,
-            "--from-pool",
+            "--from",
             SOURCE,
-            "--queue",
+            "--to",
             DESTINATION,
             "--task-id-file",
             str(path),
@@ -127,9 +127,9 @@ def test_empty_file_cannot_fall_back_to_broad_sweep(mocker, tmp_path):
     with pytest.raises(SystemExit):
         arguments(
             mocker,
-            "--from-pool",
+            "--from",
             SOURCE,
-            "--queue",
+            "--to",
             DESTINATION,
             "--task-id-file",
             str(path),

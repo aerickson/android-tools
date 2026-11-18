@@ -71,16 +71,16 @@ def test_existing_session_view_has_no_side_effects(mocker):
 
 def test_pool_arguments_view_latest_session(mocker):
     session = make_session(mocker, sampled=NOW)
-    args = arguments(mocker, "--from-pool", SOURCE, "--queue", DESTINATION)
+    args = arguments(mocker, "--from", SOURCE, "--to", DESTINATION)
     assert cli.select_session(args, False) == session
     assert args.view_only and not args.submissions_enabled
 
 
 def test_first_launch_and_new_session_are_monitoring_only(mocker):
-    args = arguments(mocker, "--from-pool", SOURCE, "--queue", DESTINATION)
+    args = arguments(mocker, "--from", SOURCE, "--to", DESTINATION)
     first = cli.select_session(args, False)
     assert not args.view_only and not args.submissions_enabled
-    args = arguments(mocker, "--from-pool", SOURCE, "--queue", DESTINATION, "--new-session")
+    args = arguments(mocker, "--from", SOURCE, "--to", DESTINATION, "--new-session")
     second = cli.select_session(args, False)
     assert first.path != second.path
     assert first.report_path.exists()
@@ -108,11 +108,11 @@ def test_submission_flag_cannot_change_view_mode(mocker):
 @pytest.mark.parametrize(
     "extra",
     [
-        ["--from-pool", SOURCE],
+        ["--from", SOURCE],
         ["--resume"],
         ["--new-session"],
-        ["--from-pool", SOURCE, "--queue", DESTINATION, "--resume", "--new-session"],
-        ["--session", "/tmp/example", "--from-pool", SOURCE, "--queue", DESTINATION],
+        ["--from", SOURCE, "--to", DESTINATION, "--resume", "--new-session"],
+        ["--session", "/tmp/example", "--from", SOURCE, "--to", DESTINATION],
     ],
 )
 def test_invalid_mode_combinations(mocker, extra):
@@ -171,7 +171,7 @@ def test_real_monitoring_cycle_and_resume_do_not_submit(mocker):
     mocker.patch.object(cli.taskcluster, "WorkerManager", return_value=manager)
     mocker.patch.object(cli.taskcluster, "Auth", return_value=auth)
     mocker.patch.object(replay_controller, "load_discovery", return_value=Discovery([], 0, 0, 0, 0))
-    arguments(mocker, "--from-pool", SOURCE, "--queue", DESTINATION, "--once", "--output", "log")
+    arguments(mocker, "--from", SOURCE, "--to", DESTINATION, "--once", "--output", "log")
     assert cli.main() == 0
     session = sessions.list_sessions()[0]
     assert session.report()["sampled_at"]
@@ -191,7 +191,7 @@ def test_new_session_does_not_inherit_successes(mocker):
         state.ensure_job("old", "Old task")
         with state.db:
             state.db.execute("UPDATE workloads SET successes=4")
-    args = arguments(mocker, "--from-pool", SOURCE, "--queue", DESTINATION, "--new-session")
+    args = arguments(mocker, "--from", SOURCE, "--to", DESTINATION, "--new-session")
     new = cli.select_session(args, False)
     with ControllerState(new.state_path) as state:
         assert not state.db.execute("SELECT * FROM workloads").fetchall()

@@ -433,9 +433,9 @@ def test_cli_once_dry_run(mocker, tmp_path, capsys):
         "sys.argv",
         [
             "replay_tc_pool.py",
-            "--from-pool",
+            "--from",
             SOURCE,
-            "--queue",
+            "--to",
             DESTINATION,
             "--dry-run",
             "--once",
@@ -467,7 +467,7 @@ def test_cli_once_dry_run(mocker, tmp_path, capsys):
     [["--poll-interval", "0"], ["--worker-active-minutes", "-1"], ["--failure-backoff", "3601"]],
 )
 def test_cli_rejects_bad_limits(mocker, extra):
-    mocker.patch("sys.argv", ["replay_tc_pool.py", "--from-pool", SOURCE, "--queue", DESTINATION, *extra])
+    mocker.patch("sys.argv", ["replay_tc_pool.py", "--from", SOURCE, "--to", DESTINATION, *extra])
     with pytest.raises(SystemExit):
         cli.parse_args()
 
@@ -614,7 +614,7 @@ def test_report_failure_returns_nonzero(setup, mocker, tmp_path):
 
 
 def test_cli_coverage_defaults_and_overrides(mocker):
-    command = ["replay_tc_pool.py", "--from-pool", SOURCE, "--queue", DESTINATION]
+    command = ["replay_tc_pool.py", "--from", SOURCE, "--to", DESTINATION]
     mocker.patch("sys.argv", command)
     args = cli.parse_args()
     assert args.stop_on_full_coverage and not args.exit_on_full_coverage
@@ -1002,9 +1002,9 @@ def test_targeted_cli_preview_dry_run_then_resume_keeps_cap(mocker, setup, tmp_p
     mocker.patch.object(cli.taskcluster, "Auth", return_value=instance.auth)
     command = [
         "replay_tc_pool.py",
-        "--from-pool",
+        "--from",
         SOURCE,
-        "--queue",
+        "--to",
         DESTINATION,
         "--task-id",
         jobs[0].task_id,

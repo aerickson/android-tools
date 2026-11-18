@@ -31,7 +31,7 @@ def current_invocation(args, snapshot):
         if not viewing:
             command.append("--resume")
     else:
-        command.extend(["--from-pool", args.from_pool, "--queue", args.queue])
+        command.extend(["--from", args.from_pool, "--to", args.queue])
     if not viewing and getattr(args, "submissions_enabled", False):
         command.append("--submit-on-start")
     targeted = bool(getattr(args, "task_ids", []))
