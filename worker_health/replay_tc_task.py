@@ -27,7 +27,8 @@ from worker_health.replay_coverage import remember_results, remember_submission,
 
 ROOT_URL = "https://firefox-ci-tc.services.mozilla.com"
 TASK_ID_PATTERN = r"[A-Za-z0-9_-]{22}"
-QUEUE_PATTERN = r"[a-zA-Z0-9_-]{1,38}/[a-z]([-a-z0-9]{0,36}[a-z0-9])?"
+PROVISIONER_PATTERN = r"[a-zA-Z0-9_-]{1,38}"
+WORKER_TYPE_PATTERN = r"[a-z]([-a-z0-9]{0,36}[a-z0-9])?"
 ARTIFACT_URL_PATTERN = re.compile(
     rf"https?://firefox-ci-tc\.services\.mozilla\.com/api/queue/v1/task/({TASK_ID_PATTERN})"
     r"(?:/runs/(\d+))?/artifacts/([^\s\"'\\<>]+)",
@@ -55,8 +56,20 @@ def queue_argument(value):
         if url.hostname != urlsplit(ROOT_URL).hostname or not match:
             raise argparse.ArgumentTypeError("Expected a Firefox CI worker pool URL")
         value = f"{match.group(1)}/{match.group(2)}"
-    if not re.fullmatch(QUEUE_PATTERN, value):
-        raise argparse.ArgumentTypeError("Expected PROVISIONER/WORKER_TYPE or a Firefox CI worker pool URL")
+    if value.count("/") != 1:
+        raise argparse.ArgumentTypeError(
+            f"Invalid pool ID {value!r}. Expected PROVISIONER/WORKER_TYPE or a Firefox CI worker pool URL.",
+        )
+    provisioner, worker_type = value.split("/")
+    if not re.fullmatch(PROVISIONER_PATTERN, provisioner):
+        raise argparse.ArgumentTypeError(
+            f"Invalid provisioner {provisioner!r}. Use 1–38 letters, digits, hyphens, or underscores.",
+        )
+    if not re.fullmatch(WORKER_TYPE_PATTERN, worker_type):
+        raise argparse.ArgumentTypeError(
+            f"Invalid worker type {worker_type!r}. Use 1–38 lowercase letters, digits, or hyphens. "
+            "Start with a letter and end with a letter or digit.",
+        )
     return value
 
 

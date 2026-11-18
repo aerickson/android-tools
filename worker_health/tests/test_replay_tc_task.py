@@ -84,11 +84,18 @@ def test_worker_pool_url_argument():
 
 
 @pytest.mark.parametrize(
-    "value",
-    ["missing-slash", "a/b/c", "a/UPPERCASE", "https://example.com/provisioners/a/worker-types/b"],
+    ("value", "message"),
+    [
+        ("missing-slash", "Expected PROVISIONER/WORKER_TYPE"),
+        ("a/b/c", "Expected PROVISIONER/WORKER_TYPE"),
+        ("a!/worker", "Invalid provisioner 'a!'"),
+        ("a/UPPERCASE", "Invalid worker type 'UPPERCASE'"),
+        ("releng-hardware/gecko_t_linux_2404_talos", "Invalid worker type 'gecko_t_linux_2404_talos'"),
+        ("https://example.com/provisioners/a/worker-types/b", "Expected a Firefox CI worker pool URL"),
+    ],
 )
-def test_invalid_worker_pool(value):
-    with pytest.raises(argparse.ArgumentTypeError):
+def test_invalid_worker_pool(value, message):
+    with pytest.raises(argparse.ArgumentTypeError, match=message):
         replay.queue_argument(value)
 
 
