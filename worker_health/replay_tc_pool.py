@@ -55,13 +55,18 @@ viewing works offline. See "Replay client scopes" in README.md for scope details
     )
 
     sessions = parser.add_argument_group("Sessions and pools")
-    sessions.add_argument("--from-pool", type=queue_argument, metavar="POOL", help="Source pool ID or worker pool URL")
+    sessions.add_argument(
+        "--from-pool",
+        type=queue_argument,
+        metavar="POOL",
+        help="Source pool as PROVISIONER/WORKER_TYPE or a Firefox CI worker pool URL",
+    )
     sessions.add_argument(
         "-q",
         "--queue",
         type=queue_argument,
         metavar="POOL",
-        help="Destination pool ID or worker pool URL",
+        help="Destination pool as PROVISIONER/WORKER_TYPE or a Firefox CI worker pool URL",
     )
     sessions.add_argument("--session", metavar="PATH", help="Open a session directory or its report.json")
     sessions.add_argument(
