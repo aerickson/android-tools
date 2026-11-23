@@ -806,10 +806,42 @@ def test_resume_keeps_saved_rows_visible_during_initial_scan(setup, mocker):
     resumed.tick()
     assert during_scan[0]["refreshing"]
     assert during_scan[0]["passed"] == 3
-    assert "showing saved results" in during_scan[0]["message"]
+    assert "Reading source worker histories" in during_scan[0]["message"]
     assert not during_scan[0]["full_coverage"]
     assert not resumed.snapshot().get("refreshing", False)
     assert resumed.snapshot()["passed"] == 3
+
+
+def test_resume_publishes_completed_tasks_before_source_scan_finishes(setup, mocker):
+    instance, jobs = setup
+    instance.tick()
+    saved = instance.report()
+    assert saved["outstanding_tasks"]
+    instance.args.session_info = SimpleNamespace(report=lambda: saved)
+    instance.queue.status.return_value = {"status": {"state": "completed"}}
+    resumed = controller.ReplayController(
+        instance.queue,
+        instance.manager,
+        instance.auth,
+        instance.state,
+        instance.args,
+        clock=lambda: NOW,
+    )
+    mocker.patch.object(controller, "load_discovery", return_value=None)
+
+    def discover(*args, **kwargs):
+        snapshot = resumed.snapshot()
+        assert snapshot["refreshing"]
+        assert not snapshot["coverage_confirmed"]
+        assert snapshot["outstanding"] == 0
+        key = saved["outstanding_tasks"][0]["workload"]
+        row = next(row for row in snapshot["rows"] if row["key"] == key)
+        assert row["coverage"] == "passed"
+        assert row["elapsed"] == "-"
+        return Discovery(jobs, 1, 3, 3, 0)
+
+    mocker.patch.object(controller, "discover_jobs", side_effect=discover)
+    resumed.tick()
 
 
 def test_pausing_during_preflight_prevents_reservation(setup):

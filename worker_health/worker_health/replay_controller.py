@@ -369,6 +369,13 @@ class ReplayController:
         self.progress("Reading current client scopes")
         self.granted = self.auth.currentScopes()["scopes"]
         self.scopes_checked_at = self.clock().isoformat()
+        if not self.view_ready and self.histories:
+            self.refresh_view()
+            self.workers = self.saved_snapshot.get("workers", 0)
+            self.limit = self.saved_snapshot.get("limit", 0)
+            self.outstanding = len(self.state.active())
+            self.view_ready = True
+            self.progress("Submitted task statuses updated; checking source coverage")
         if (
             self.last_discovery is None
             or (now - self.last_discovery).total_seconds() >= self.args.source_refresh_minutes * 60
@@ -628,6 +635,7 @@ class ReplayController:
         passed, eligible, rows = self.display_rows()
         data = {
             "successes_per_type": self.success_target,
+            "refreshing": self.last_discovery is None,
             "workers": self.workers,
             "sampled_at": self.sampled_at,
             "outstanding": self.outstanding,
