@@ -156,14 +156,14 @@ viewing works offline. See "Replay client scopes" in README.md for scope details
         "--poll-interval",
         metavar="SECONDS",
         type=positive_int,
-        default=60,
+        default=30,
         help="Seconds between scheduling cycles (default: %(default)s)",
     )
     scheduling.add_argument(
         "--submit-interval",
         metavar="SECONDS",
         type=positive_int,
-        default=60,
+        default=30,
         help="Minimum seconds between submissions (default: %(default)s)",
     )
     scheduling.add_argument(
